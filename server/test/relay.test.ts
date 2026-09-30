@@ -158,6 +158,50 @@ describe('relay', () => {
     await s.closed;
   });
 
+  it('exchanges a one-time pairing code for credentials', async () => {
+    const r = await startRelay();
+    relay = r.relay;
+    const a = await agent(r.url);
+    await a.next((f) => f.t === 'hello_ok');
+    a.send({ t: 'pair_code', code: 'ABCD-2345', ttlMs: 60_000 });
+    assert.equal((await a.next((f) => f.t === 'pair_code_ok')).code, 'ABCD2345');
+
+    const p = await open(r.url);
+    p.send({ t: 'hello', role: 'pair', code: 'abcd 2345' });
+    const req = await a.next((f) => f.t === 'pair_request');
+    a.send({ t: 'pair_response', pairId: req.pairId, secret: SECRET });
+    assert.deepEqual(await p.next(), { t: 'paired', agentId: AGENT_ID, secret: SECRET, name: 'pc' });
+    await p.closed;
+
+    // Single use.
+    const again = await open(r.url);
+    again.send({ t: 'hello', role: 'pair', code: 'ABCD2345' });
+    assert.equal((await again.next()).code, 'unauthorized');
+  });
+
+  it('never hands out a secret that does not match the registration', async () => {
+    const r = await startRelay();
+    relay = r.relay;
+    const a = await agent(r.url);
+    await a.next((f) => f.t === 'hello_ok');
+    a.send({ t: 'pair_code', code: 'WXYZ2345', ttlMs: 60_000 });
+    await a.next((f) => f.t === 'pair_code_ok');
+    const p = await open(r.url);
+    p.send({ t: 'hello', role: 'pair', code: 'WXYZ2345' });
+    const req = await a.next((f) => f.t === 'pair_request');
+    a.send({ t: 'pair_response', pairId: req.pairId, secret: 'something else' });
+    assert.equal((await p.next()).code, 'unauthorized');
+  });
+
+  it('rejects malformed pairing codes from the agent', async () => {
+    const r = await startRelay();
+    relay = r.relay;
+    const a = await agent(r.url);
+    await a.next((f) => f.t === 'hello_ok');
+    a.send({ t: 'pair_code', code: 'OOOO0000', ttlMs: 60_000 });
+    assert.equal((await a.next((f) => f.t === 'error')).code, 'bad_request');
+  });
+
   it('rejects malformed hello frames', async () => {
     const r = await startRelay();
     relay = r.relay;

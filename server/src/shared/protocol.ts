@@ -29,7 +29,23 @@ export type ClientHello = {
   v?: number;
 };
 
-export type Hello = AgentHello | ClientHello;
+/** Exchange a short pairing code for the agent's credentials. */
+export type PairHello = {
+  t: 'hello';
+  role: 'pair';
+  code: string;
+  v?: number;
+};
+
+export type Hello = AgentHello | ClientHello | PairHello;
+
+/** Pairing codes: 8 chars from an alphabet without look-alikes (0/O, 1/I/L). */
+export const PAIR_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+export const PAIR_CODE_LENGTH = 8;
+
+export function normalizePairCode(code: string): string {
+  return code.toUpperCase().replace(/[^0-9A-Z]/g, '');
+}
 
 export type RelayErrorCode =
   | 'bad_request'
@@ -46,6 +62,14 @@ export type RelayFrame =
   | { t: 'presence'; online: boolean; name?: string }
   | { t: 'client_joined'; clientId: string }
   | { t: 'client_left'; clientId: string }
+  /** agent → relay: register a one-time pairing code. */
+  | { t: 'pair_code'; code: string; ttlMs: number }
+  | { t: 'pair_code_ok'; code: string; expiresAt: number }
+  /** relay → agent: someone presented the code; reply with pair_response. */
+  | { t: 'pair_request'; pairId: string }
+  | { t: 'pair_response'; pairId: string; secret: string }
+  /** relay → pairing socket, then closed. */
+  | { t: 'paired'; agentId: string; secret: string; name?: string }
   /** client → agent (relay stamps clientId) */
   | { t: 'msg'; clientId: string; data: ClientMessage }
   /** agent → client(s); `to` limits delivery to one client */

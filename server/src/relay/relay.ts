@@ -4,7 +4,14 @@ import { WebSocketServer, type RawData, WebSocket } from 'ws';
 
 import { hexDigestEquals, randomToken, sha256Hex } from '../shared/crypto.ts';
 import { type Logger, silentLogger } from '../shared/log.ts';
-import { MAX_FRAME_BYTES, type Hello, type RelayErrorCode } from '../shared/protocol.ts';
+import {
+  MAX_FRAME_BYTES,
+  PAIR_CODE_ALPHABET,
+  PAIR_CODE_LENGTH,
+  normalizePairCode,
+  type Hello,
+  type RelayErrorCode,
+} from '../shared/protocol.ts';
 
 export type RelayOptions = {
   /** When set, agents must present this key to register. */
@@ -51,11 +58,14 @@ export function createRelay(opts: RelayOptions = {}): Relay {
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   const agents = new Map<string, AgentEntry>();
   const authFailures = new Map<string, { count: number; since: number }>();
+  const pairCodes = new Map<string, { agentId: string; expiresAt: number }>();
+  const pendingPairs = new Map<string, { ws: WebSocket; agentId: string; timer: NodeJS.Timeout }>();
   const servers: Server[] = [];
 
   const heartbeat = setInterval(() => {
     // Forget agents that have been offline for a day with nobody waiting.
     const now = Date.now();
+    for (const [code, p] of pairCodes) if (p.expiresAt < now) pairCodes.delete(code);
     for (const [id, a] of agents) {
       if (!a.socket && a.clients.size === 0 && now - a.offlineSince > 24 * 3600_000) agents.delete(id);
     }
@@ -103,6 +113,9 @@ export function createRelay(opts: RelayOptions = {}): Relay {
   function parseHello(raw: RawData): Hello | null {
     try {
       const v = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (v.t === 'hello' && v.role === 'pair' && typeof v.code === 'string' && v.code.length <= 32) {
+        return v as unknown as Hello;
+      }
       if (v.t !== 'hello' || typeof v.agentId !== 'string' || v.agentId.length < 8 || v.agentId.length > 128) {
         return null;
       }
@@ -157,6 +170,8 @@ export function createRelay(opts: RelayOptions = {}): Relay {
       } catch {
         return;
       }
+      if (frame.t === 'pair_code') return onPairCode(agent, frame as { code?: unknown; ttlMs?: unknown });
+      if (frame.t === 'pair_response') return onPairResponse(agent, frame as { pairId?: unknown; secret?: unknown });
       if (frame.t !== 'msg' || frame.data === undefined) return;
       const out = JSON.stringify({ t: 'msg', data: frame.data });
       if (typeof frame.to === 'string') {
@@ -176,6 +191,63 @@ export function createRelay(opts: RelayOptions = {}): Relay {
       log.info('agent offline', { agentId: agent.agentId });
       for (const client of agent.clients.values()) send(client, { t: 'presence', online: false });
     });
+  }
+
+  // --- pairing codes --------------------------------------------------------
+
+  function onPairCode(agent: AgentEntry, frame: { code?: unknown; ttlMs?: unknown }): void {
+    if (!agent.socket) return;
+    const code = typeof frame.code === 'string' ? normalizePairCode(frame.code) : '';
+    if (code.length !== PAIR_CODE_LENGTH || [...code].some((c) => !PAIR_CODE_ALPHABET.includes(c))) {
+      send(agent.socket, { t: 'error', code: 'bad_request', message: 'invalid pairing code' });
+      return;
+    }
+    for (const [c, p] of pairCodes) if (p.agentId === agent.agentId) pairCodes.delete(c);
+    const ttl = Math.min(Math.max(Number(frame.ttlMs) || 0, 10_000), 15 * 60_000);
+    const expiresAt = Date.now() + ttl;
+    pairCodes.set(code, { agentId: agent.agentId, expiresAt });
+    send(agent.socket, { t: 'pair_code_ok', code, expiresAt });
+  }
+
+  function onPairResponse(agent: AgentEntry, frame: { pairId?: unknown; secret?: unknown }): void {
+    if (typeof frame.pairId !== 'string' || typeof frame.secret !== 'string') return;
+    const pending = pendingPairs.get(frame.pairId);
+    if (!pending || pending.agentId !== agent.agentId) return;
+    pendingPairs.delete(frame.pairId);
+    clearTimeout(pending.timer);
+    // Only hand out a secret that actually matches this agent's registration.
+    if (!hexDigestEquals(agent.secretHash, sha256Hex(frame.secret))) {
+      return fail(pending.ws, 'unauthorized', 'agent returned mismatched credentials');
+    }
+    send(pending.ws, { t: 'paired', agentId: agent.agentId, secret: frame.secret, name: agent.name });
+    pending.ws.close(1000, 'paired');
+  }
+
+  function onPair(ws: WebSocket, hello: Extract<Hello, { role: 'pair' }>, ip: string): void {
+    if (isRateLimited(ip)) return fail(ws, 'rate_limited', 'too many failed attempts, try again later');
+    const code = normalizePairCode(hello.code);
+    const entry = pairCodes.get(code);
+    if (!entry || entry.expiresAt < Date.now()) {
+      if (entry) pairCodes.delete(code);
+      recordAuthFailure(ip);
+      log.warn('pairing rejected: bad code', { ip });
+      return fail(ws, 'unauthorized', 'pairing code is invalid or expired');
+    }
+    const agent = agents.get(entry.agentId);
+    if (!agent?.socket) return fail(ws, 'agent_offline', 'device is offline');
+    pairCodes.delete(code); // single use
+    const pairId = randomToken(12);
+    const timer = setTimeout(() => {
+      pendingPairs.delete(pairId);
+      fail(ws, 'timeout', 'device did not respond');
+    }, 10_000);
+    pendingPairs.set(pairId, { ws, agentId: agent.agentId, timer });
+    ws.once('close', () => {
+      clearTimeout(timer);
+      pendingPairs.delete(pairId);
+    });
+    send(agent.socket, { t: 'pair_request', pairId });
+    log.info('pairing requested', { agentId: agent.agentId, ip });
   }
 
   function onClient(ws: WebSocket, hello: Extract<Hello, { role: 'client' }>, ip: string): void {
@@ -240,6 +312,7 @@ export function createRelay(opts: RelayOptions = {}): Relay {
       const hello = parseHello(raw);
       if (!hello) return fail(ws, 'bad_request', 'expected hello frame');
       if (hello.role === 'agent') onAgent(ws, hello, ip);
+      else if (hello.role === 'pair') onPair(ws, hello, ip);
       else onClient(ws, hello, ip);
     });
     ws.once('close', () => clearTimeout(timer));
