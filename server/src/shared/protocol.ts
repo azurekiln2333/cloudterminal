@@ -177,6 +177,8 @@ export type ClientRequest =
 
 export type ClientMessage = ClientRequest & { id?: string };
 
+export type DirEntry = { name: string; path: string };
+
 export type HistoryItem = {
   sessionId: string;
   summary: string;
@@ -202,12 +204,14 @@ export type AgentMessage =
   | {
       kind: 'dir';
       id?: string;
+      /** '' is the virtual listing of allowed roots. */
       path: string;
+      /** null when there is nothing above (`path` is the root listing). */
       parent: string | null;
-      entries: string[];
+      entries: DirEntry[];
     }
   | { kind: 'session_created'; id?: string; session: SessionInfo }
   | { kind: 'session'; session: SessionInfo }
-  | { kind: 'events'; sessionId: string; events: SessionEvent[]; reset: boolean }
+  | { kind: 'events'; id?: string; sessionId: string; events: SessionEvent[]; reset: boolean }
   | { kind: 'event'; sessionId: string; event: SessionEvent }
   | { kind: 'delta'; sessionId: string; text: string };
