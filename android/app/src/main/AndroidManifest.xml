@@ -2,7 +2,8 @@
     <!-- Talks to the relay server over WebSocket. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- usesCleartextTraffic: ws:// is allowed for LAN relays (agent
-         --local-relay); internet relays should use wss://. -->
+         started with the local-relay option); internet relays should
+         use wss://. -->
     <application
         android:label="CloudTerminal"
         android:name="${applicationName}"

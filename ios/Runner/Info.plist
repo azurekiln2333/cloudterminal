@@ -10,7 +10,7 @@
 	<string>CloudTerminal</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<!-- ws:// to a LAN relay (agent --local-relay). -->
+		<!-- ws:// to a LAN relay (agent local-relay mode). -->
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
