@@ -12,7 +12,8 @@
     "agent": "node src/agent/main.ts",
     "check": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
-    "e2e": "node scripts/e2e.ts"
+    "e2e": "node scripts/e2e.ts",
+    "demo": "node scripts/demo-agent.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.286",
