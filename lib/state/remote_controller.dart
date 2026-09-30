@@ -341,7 +341,14 @@ class RemoteController extends ChangeNotifier {
       _agent = AgentInfo.fromJson(info);
       await refreshSessions();
       for (final id in _subscribed.toList()) {
-        await _subscribe(id);
+        // Sessions that vanished (agent restarted) were marked gone by the
+        // list refresh; one of them failing must not block the others.
+        if (!_sessions.containsKey(id)) continue;
+        try {
+          await _subscribe(id);
+        } on RemoteException {
+          // Surfaced on the session screen; keep resubscribing the rest.
+        }
       }
       _notify();
     } on RemoteException catch (e) {

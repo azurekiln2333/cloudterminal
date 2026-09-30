@@ -11,6 +11,7 @@ import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 
 import { createRelay } from '../relay/relay.ts';
+import { randomToken } from '../shared/crypto.ts';
 import { consoleLogger } from '../shared/log.ts';
 import { loadConfig, saveConfig, configPath } from './config.ts';
 import { AgentCore } from './core.ts';
@@ -64,9 +65,13 @@ let relayUrl = values.relay ?? process.env.CLOUDTERMINAL_RELAY ?? config.relayUr
 let publicUrl = values['public-url'];
 let localRelay: ReturnType<typeof createRelay> | undefined;
 
+// Only this process may register on its own relay; phones still need the
+// pairing secret. Without a key, anything on the LAN could park agents here.
+const localRelayKey = randomToken(24);
+
 if (values['local-relay']) {
   const port = Number(values.port ?? 8787);
-  localRelay = createRelay({ logger: consoleLogger('relay') });
+  localRelay = createRelay({ logger: consoleLogger('relay'), relayKey: localRelayKey });
   await localRelay.listen(port, '0.0.0.0');
   relayUrl = `ws://127.0.0.1:${port}/ws`;
   publicUrl ??= `ws://${lanAddress() ?? 'localhost'}:${port}/ws`;
@@ -99,7 +104,7 @@ const link = new RelayLink({
   url: relayUrl,
   agentId: config.agentId,
   secret: config.secret,
-  relayKey: localRelay ? undefined : config.relayKey,
+  relayKey: localRelay ? localRelayKey : config.relayKey,
   name: values.name ?? hostname(),
   core,
   logger: log,

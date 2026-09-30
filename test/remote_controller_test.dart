@@ -166,6 +166,26 @@ void main() {
       expect(second.lastRequest('subscribe'), containsPair('afterSeq', 2));
     });
 
+    test('after an agent restart, gone sessions do not block resubscribing others', () async {
+      final first = healthyAgent(sessions: <Map<String, dynamic>>[sessionJson('old'), sessionJson('keep')]);
+      final second = healthyAgent(sessions: <Map<String, dynamic>>[sessionJson('keep')]);
+      queue.addAll(<FakeSocket>[first, second]);
+      controller = build()..connect();
+      await settle();
+      final oldView = controller.view(controller.session('old')!);
+      controller.view(controller.session('keep')!);
+      await controller.subscribe('old');
+      await controller.subscribe('keep');
+
+      first.drop();
+      await settle();
+      controller.reconnectNow();
+      await settle();
+
+      expect(oldView.gone, isTrue);
+      expect(second.requests.where((r) => r['type'] == 'subscribe').map((r) => r['sessionId']), <String>['keep']);
+    });
+
     test('stops retrying and reports authFailed on unauthorized', () async {
       final bad = FakeSocket();
       bad.onSend = (s, f) => scheduleMicrotask(() {
