@@ -1,7 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Talks to the relay server over WebSocket. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- usesCleartextTraffic: ws:// is allowed for LAN relays (agent
+         --local-relay); internet relays should use wss://. -->
     <application
-        android:label="cloudterminal"
+        android:label="CloudTerminal"
         android:name="${applicationName}"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
