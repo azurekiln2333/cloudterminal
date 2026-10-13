@@ -12,6 +12,16 @@ import {
   type Hello,
   type RelayErrorCode,
 } from '../shared/protocol.ts';
+import type { AccountClientHello } from '../shared/protocol-account.ts';
+
+import { createTenancy, type Tenancy } from './tenancy.ts';
+import type { DbPool } from '../db/pool.ts';
+
+/** Relay error codes, including the additive account-layer codes. */
+type RelayError = RelayErrorCode | 'account_unavailable';
+
+/** Client hello, with the optional account-bound variant. */
+type AnyClientHello = Extract<Hello, { role: 'client' }> | AccountClientHello;
 
 export type RelayOptions = {
   /** When set, agents must present this key to register. */
@@ -21,6 +31,14 @@ export type RelayOptions = {
   /** Failed client auths allowed per IP within `authWindowMs`. */
   maxAuthFailures?: number;
   authWindowMs?: number;
+  /**
+   * Optional account layer. When a ready pool is supplied, clients may present
+   * `relayToken` instead of the device secret. Omitted (or a null pool) keeps
+   * the relay byte-identical to the pre-account behavior.
+   */
+  db?: DbPool | null;
+  /** Cache TTL for binding decisions. */
+  bindingCacheMs?: number;
   logger?: Logger;
 };
 
@@ -43,6 +61,16 @@ export type Relay = {
   close(): Promise<void>;
   /** For tests / diagnostics. */
   stats(): { agents: number; online: number; clients: number };
+  /**
+   * Resolve a one-time pairing code to the device that issued it, consuming it.
+   * Used by the HTTP binding API to prove device consent (PRD R12). Resolves to
+   * `null` when the code is unknown or expired.
+   */
+  resolvePairCode(code: string): Promise<string | null>;
+  /** Whether a device currently holds a live agent socket. */
+  isDeviceOnline(deviceId: string): boolean;
+  /** Drop a cached binding decision after the HTTP API revokes it. */
+  invalidateBinding(accountId: string, deviceId: string): void;
 };
 
 const CLOSE_POLICY = 1008;
@@ -55,6 +83,11 @@ export function createRelay(opts: RelayOptions = {}): Relay {
   const maxAuthFailures = opts.maxAuthFailures ?? 10;
   const authWindowMs = opts.authWindowMs ?? 10 * 60_000;
 
+  const tenancy: Tenancy = createTenancy({
+    pool: opts.db ?? null,
+    bindingCacheMs: opts.bindingCacheMs,
+    logger: log,
+  });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   const agents = new Map<string, AgentEntry>();
   const authFailures = new Map<string, { count: number; since: number }>();
@@ -85,7 +118,7 @@ export function createRelay(opts: RelayOptions = {}): Relay {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
   }
 
-  function fail(ws: WebSocket, code: RelayErrorCode, message: string): void {
+  function fail(ws: WebSocket, code: RelayError, message: string): void {
     send(ws, { t: 'error', code, message });
     ws.close(CLOSE_POLICY, code);
   }
@@ -123,6 +156,15 @@ export function createRelay(opts: RelayOptions = {}): Relay {
         return v as unknown as Hello;
       }
       if (v.role === 'client' && typeof v.secret === 'string' && v.secret.length > 0 && v.secret.length <= 512) {
+        return v as unknown as Hello;
+      }
+      // Account-bound client: no device secret, only a relay-issued token.
+      if (
+        v.role === 'client' &&
+        typeof v.relayToken === 'string' &&
+        v.relayToken.length > 0 &&
+        v.relayToken.length <= 512
+      ) {
         return v as unknown as Hello;
       }
       return null;
@@ -250,11 +292,19 @@ export function createRelay(opts: RelayOptions = {}): Relay {
     log.info('pairing requested', { agentId: agent.agentId, ip });
   }
 
-  function onClient(ws: WebSocket, hello: Extract<Hello, { role: 'client' }>, ip: string): void {
+  function onClient(
+    ws: WebSocket,
+    hello: AnyClientHello,
+    ip: string,
+  ): void {
     if (isRateLimited(ip)) {
       log.warn('client rejected: rate limited', { ip });
       return fail(ws, 'rate_limited', 'too many failed attempts, try again later');
     }
+    if ('relayToken' in hello && typeof hello.relayToken === 'string') {
+      return void onAccountClient(ws, hello.agentId, hello.relayToken, ip);
+    }
+    if (!('secret' in hello)) return fail(ws, 'bad_request', 'client hello needs secret or relayToken');
     const entry = agents.get(hello.agentId);
     if (!entry) {
       // Nothing to authenticate against until the agent registers (e.g. right
@@ -269,11 +319,62 @@ export function createRelay(opts: RelayOptions = {}): Relay {
     }
 
     const agent = entry;
+    joinClient(ws, agent, ip, null);
+  }
+
+  /**
+   * Account-bound client. The relay resolves the token, checks that the account
+   * is actively bound to the requested device, then joins the client to that
+   * device exactly like the legacy path. Several accounts may be attached to
+   * one device at the same time (PRD R7/AC2).
+   */
+  async function onAccountClient(
+    ws: WebSocket,
+    deviceId: string,
+    relayToken: string,
+    ip: string,
+  ): Promise<void> {
+    if (!tenancy.available) {
+      log.warn('account client rejected: tenancy unavailable', { deviceId, ip });
+      return fail(ws, 'account_unavailable', 'account login is not configured on this relay');
+    }
+    let result;
+    try {
+      result = await tenancy.authorizeClient(relayToken, deviceId);
+    } catch (err) {
+      log.warn('account client rejected: lookup threw', { deviceId, ip, err: (err as Error).message });
+      return fail(ws, 'account_unavailable', 'account lookup failed, retry shortly');
+    }
+    if (!result.ok) {
+      if (result.reason === 'unavailable') {
+        log.warn('account client rejected: database unavailable', { deviceId, ip });
+        return fail(ws, 'account_unavailable', 'account lookup failed, retry shortly');
+      }
+      recordAuthFailure(ip);
+      log.warn('account client rejected', { deviceId, ip, reason: result.reason });
+      return fail(ws, 'unauthorized', 'invalid account token for this device');
+    }
+    if (ws.readyState !== WebSocket.OPEN) return; // closed while we awaited
+    const entry = agents.get(deviceId);
+    if (!entry) {
+      // The device has never registered on this relay instance.
+      return fail(ws, 'agent_offline', 'device has not connected to this relay yet');
+    }
+    joinClient(ws, entry, ip, { accountId: result.accountId });
+  }
+
+  /** Shared client-registration tail used by both auth paths. */
+  function joinClient(
+    ws: WebSocket,
+    agent: AgentEntry,
+    ip: string,
+    account: { accountId: string } | null,
+  ): void {
     const clientId = randomToken(9);
     agent.clients.set(clientId, ws);
     send(ws, { t: 'hello_ok', clientId, online: agent.socket !== null, name: agent.name });
     if (agent.socket) send(agent.socket, { t: 'client_joined', clientId });
-    log.info('client joined', { agentId: agent.agentId, clientId, ip });
+    log.info('client joined', { agentId: agent.agentId, clientId, ip, accountId: account?.accountId });
 
     ws.on('message', (raw, isBinary) => {
       if (isBinary) return;
@@ -294,7 +395,7 @@ export function createRelay(opts: RelayOptions = {}): Relay {
     ws.on('close', () => {
       agent.clients.delete(clientId);
       if (agent.socket) send(agent.socket, { t: 'client_left', clientId });
-      log.info('client left', { agentId: agent.agentId, clientId });
+      log.info('client left', { agentId: agent.agentId, clientId, accountId: account?.accountId });
     });
   }
 
@@ -373,6 +474,23 @@ export function createRelay(opts: RelayOptions = {}): Relay {
         clients += a.clients.size;
       }
       return { agents: agents.size, online, clients };
+    },
+
+    async resolvePairCode(code) {
+      const normalized = normalizePairCode(code);
+      const entry = pairCodes.get(normalized);
+      if (!entry) return null;
+      pairCodes.delete(normalized); // single use, same as the websocket pair path
+      if (entry.expiresAt < Date.now()) return null;
+      return entry.agentId;
+    },
+
+    isDeviceOnline(deviceId) {
+      return agents.get(deviceId)?.socket !== null && agents.get(deviceId) !== undefined;
+    },
+
+    invalidateBinding(accountId, deviceId) {
+      tenancy.invalidate(accountId, deviceId);
     },
   };
 }
