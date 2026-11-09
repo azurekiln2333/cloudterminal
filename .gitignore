@@ -12,6 +12,10 @@
 .swiftpm/
 migrate_working_dir/
 
+# Local build/deploy archives (regenerated locally; never commit)
+/server.zip
+/server/server.zip
+
 # IntelliJ related
 *.iml
 *.ipr
@@ -43,3 +47,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+.signing/
+*.pid
