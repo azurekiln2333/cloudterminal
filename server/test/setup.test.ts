@@ -5,7 +5,9 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { loadConfig, saveConfig } from '../src/agent/config.ts';
 import { relayAddress, setupConfig } from '../src/agent/setup.ts';
-import { registrationKey } from '../src/relay/key.ts';
+
+// Registration-key generation moved to the relay server repo as
+// `relay-key.test.ts` together with `src/relay/key.ts`.
 
 test('setup persists connection, directories, terminal preference and identity', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'ct-setup-'));
@@ -68,27 +70,5 @@ test('config reset preserves preferences and malformed configuration never repla
       await assert.rejects(loadConfig(file));
       assert.equal(await readFile(file, 'utf8'), malformed);
     }
-  } finally { await rm(dir, { recursive: true, force: true }); }
-});
-
-test('relay key generation persists, respects explicit override and rejects empty file', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'ct-key-'));
-  try {
-    const file = path.join(dir, 'relay-key');
-    const key = await registrationKey({ RELAY_KEY_FILE: file });
-    assert.ok(key && key.length >= 32);
-    assert.equal(await registrationKey({ RELAY_KEY_FILE: file }), key);
-    assert.equal(await registrationKey({ RELAY_KEY_FILE: file, RELAY_KEY: 'override' }), 'override');
-    assert.equal((await readFile(file, 'utf8')).trim(), key);
-    assert.equal(await registrationKey({}), undefined);
-    await assert.rejects(registrationKey({ RELAY_KEY: '', RELAY_KEY_FILE: file }), /RELAY_KEY must not be empty/);
-    await assert.rejects(registrationKey({ RELAY_KEY: ' ' }), /RELAY_KEY must not be empty/);
-    await assert.rejects(registrationKey({ RELAY_KEY_FILE: '' }), /RELAY_KEY_FILE must not be empty/);
-    const concurrent = path.join(dir, 'concurrent');
-    const keys = await Promise.all(Array.from({ length: 5 }, () => registrationKey({ RELAY_KEY_FILE: concurrent })));
-    assert.equal(new Set(keys).size, 1);
-    const empty = path.join(dir, 'empty');
-    await writeFile(empty, '');
-    await assert.rejects(registrationKey({ RELAY_KEY_FILE: empty }), /empty/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

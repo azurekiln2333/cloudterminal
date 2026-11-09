@@ -11,17 +11,41 @@ import {
   normalizePairCode,
   type Hello,
   type RelayErrorCode,
-} from '../shared/protocol.ts';
+} from '../shared/relay-protocol.ts';
 import type { AccountClientHello } from '../shared/protocol-account.ts';
-
-import { createTenancy, type Tenancy } from './tenancy.ts';
-import type { DbPool } from '../db/pool.ts';
 
 /** Relay error codes, including the additive account-layer codes. */
 type RelayError = RelayErrorCode | 'account_unavailable';
 
 /** Client hello, with the optional account-bound variant. */
 type AnyClientHello = Extract<Hello, { role: 'client' }> | AccountClientHello;
+
+/**
+ * Result of resolving an account token for `(token, deviceId)`.
+ * `unavailable` is retryable, the other reasons are final for this attempt.
+ */
+export type AccountClientResult =
+  | { ok: true; accountId: string }
+  | { ok: false; reason: 'no_database' | 'invalid_token' | 'not_bound' | 'unavailable' };
+
+/**
+ * The account layer the relay needs, and nothing more. `tenancy.ts` implements
+ * it on top of the optional database; the relay itself never imports `db/`.
+ */
+export type AccountAuthorizer = {
+  readonly available: boolean;
+  authorizeClient(token: string, deviceId: string): Promise<AccountClientResult>;
+  invalidate(accountId: string, deviceId: string): void;
+};
+
+/** Behaviour of the legacy relay when no account layer is configured. */
+const unavailableAccounts: AccountAuthorizer = {
+  available: false,
+  async authorizeClient() {
+    return { ok: false, reason: 'no_database' };
+  },
+  invalidate() {},
+};
 
 export type RelayOptions = {
   /** When set, agents must present this key to register. */
@@ -32,13 +56,12 @@ export type RelayOptions = {
   maxAuthFailures?: number;
   authWindowMs?: number;
   /**
-   * Optional account layer. When a ready pool is supplied, clients may present
-   * `relayToken` instead of the device secret. Omitted (or a null pool) keeps
-   * the relay byte-identical to the pre-account behavior.
+   * Optional account layer. When supplied and `available`, clients may present
+   * `relayToken` instead of the device secret. Omitted keeps the relay
+   * byte-identical to the pre-account behavior: account clients are rejected
+   * with `account_unavailable`.
    */
-  db?: DbPool | null;
-  /** Cache TTL for binding decisions. */
-  bindingCacheMs?: number;
+  accounts?: AccountAuthorizer;
   logger?: Logger;
 };
 
@@ -83,11 +106,7 @@ export function createRelay(opts: RelayOptions = {}): Relay {
   const maxAuthFailures = opts.maxAuthFailures ?? 10;
   const authWindowMs = opts.authWindowMs ?? 10 * 60_000;
 
-  const tenancy: Tenancy = createTenancy({
-    pool: opts.db ?? null,
-    bindingCacheMs: opts.bindingCacheMs,
-    logger: log,
-  });
+  const accounts: AccountAuthorizer = opts.accounts ?? unavailableAccounts;
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   const agents = new Map<string, AgentEntry>();
   const authFailures = new Map<string, { count: number; since: number }>();
@@ -334,13 +353,13 @@ export function createRelay(opts: RelayOptions = {}): Relay {
     relayToken: string,
     ip: string,
   ): Promise<void> {
-    if (!tenancy.available) {
+    if (!accounts.available) {
       log.warn('account client rejected: tenancy unavailable', { deviceId, ip });
       return fail(ws, 'account_unavailable', 'account login is not configured on this relay');
     }
     let result;
     try {
-      result = await tenancy.authorizeClient(relayToken, deviceId);
+      result = await accounts.authorizeClient(relayToken, deviceId);
     } catch (err) {
       log.warn('account client rejected: lookup threw', { deviceId, ip, err: (err as Error).message });
       return fail(ws, 'account_unavailable', 'account lookup failed, retry shortly');
@@ -490,7 +509,7 @@ export function createRelay(opts: RelayOptions = {}): Relay {
     },
 
     invalidateBinding(accountId, deviceId) {
-      tenancy.invalidate(accountId, deviceId);
+      accounts.invalidate(accountId, deviceId);
     },
   };
 }
