@@ -10,7 +10,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
+import { nativePty } from '../src/agent/pty.ts';
+import { randomToken } from '../src/shared/crypto.ts';
 import { AgentCore } from '../src/agent/core.ts';
+import { HerdrBridge, type HerdrResult, type HerdrRunOptions } from '../src/agent/herdr.ts';
 import { RelayLink } from '../src/agent/link.ts';
 import { AsyncQueue } from '../src/agent/queue.ts';
 import type { QueryFn, QueryHandle } from '../src/agent/session.ts';
@@ -20,10 +23,11 @@ import { consoleLogger } from '../src/shared/log.ts';
 const { values } = parseArgs({
   options: {
     port: { type: 'string', default: '8790' },
-    'agent-id': { type: 'string', default: 'demo-agent-0001' },
-    secret: { type: 'string', default: 'demo-secret' },
+    'agent-id': { type: 'string', default: `demo-${randomToken(8)}` },
+    secret: { type: 'string', default: randomToken(32) },
     root: { type: 'string' },
     fast: { type: 'boolean' },
+    herdr: { type: 'boolean' },
   },
 });
 
@@ -99,9 +103,47 @@ const demoQuery: QueryFn = ({ prompt, options }) => {
 const log = consoleLogger('demo');
 const port = Number(values.port);
 const relay = createRelay({ logger: log });
-await relay.listen(port, '0.0.0.0');
+await relay.listen(port, '127.0.0.1');
 const root = values.root ?? (await mkdtemp(path.join(tmpdir(), 'ct-demo-')));
-const core = new AgentCore({ queryFn: demoQuery, roots: [root], defaultCwd: root, logger: log });
+
+/**
+ * Scripted Herdr runner for `--herdr`. It answers the CLI JSON contract with
+ * fixed data so the phone's Herdr UI can be exercised end-to-end over a real
+ * relay without a Herdr installation or any real workspace being touched.
+ * `pane read` prints raw text like the real CLI.
+ */
+const demoHerdrRunner = async ({ argv }: HerdrRunOptions): Promise<HerdrResult> => {
+  const ok = (result: unknown): HerdrResult => ({ code: 0, stdout: JSON.stringify({ result }), stderr: '', timedOut: false });
+  const [group, cmd] = argv;
+  if (argv[0] === '--version') return { code: 0, stdout: 'herdr 0.9.3\n', stderr: '', timedOut: false };
+  if (group === 'status') {
+    return { code: 0, stdout: 'client:\n  version: 0.9.3\n  protocol: 22\nserver:\n  status: running\n  socket: /tmp/herdr.sock\n', stderr: '', timedOut: false };
+  }
+  if (group === 'workspace') {
+    if (cmd === 'list') {
+      return ok({ type: 'workspace_list', workspaces: [{ workspace_id: 'wJ', label: 'cloudterminal', number: 1, focused: true, agent_status: 'working', pane_count: 2, tab_count: 1, active_tab_id: 'wJ:t1' }] });
+    }
+    return ok({ workspace_id: 'wJ' });
+  }
+  if (group === 'tab') return ok({ type: 'tab_list', tabs: [{ tab_id: 'wJ:t1', workspace_id: 'wJ', label: '1', number: 1, focused: true, agent_status: 'working', pane_count: 2 }] });
+  if (group === 'pane') {
+    if (argv.includes('wZ:p9')) return { code: 1, stdout: JSON.stringify({ error: { code: 'pane_not_found', message: 'pane wZ:p9 not found' }, id: 'cli:pane:read' }), stderr: '', timedOut: false };
+    if (cmd === 'read') return { code: 0, stdout: 'DEMO_HERDR_PANE_OUTPUT\n', stderr: '', timedOut: false };
+    if (cmd === 'list') return ok({ type: 'pane_list', panes: [{ pane_id: 'wJ:p2', workspace_id: 'wJ', tab_id: 'wJ:t1', cwd: root, focused: false, terminal_title: 'pi - cloudterminal', agent: 'pi', agent_status: 'idle' }] });
+    return ok({ pane_id: 'wJ:p2' });
+  }
+  if (group === 'agent') {
+    if (cmd === 'list') return ok({ agents: [{ pane_id: 'wJ:p2', workspace_id: 'wJ', tab_id: 'wJ:t1', cwd: root, agent: 'pi', agent_status: 'idle', focused: false, terminal_title: 'pi - cloudterminal' }] });
+    if (cmd === 'prompt') return ok({ agent: 'wJ:p2' });
+    return ok({ pane_id: 'wJ:p2' });
+  }
+  return { code: 1, stdout: JSON.stringify({ error: { code: 'pane_not_found', message: `demo does not model ${argv.join(' ')}` } }), stderr: '', timedOut: false };
+};
+
+const core = new AgentCore({
+  ptyFactory: nativePty, queryFn: demoQuery, roots: [root], defaultCwd: root, logger: log,
+  ...(values.herdr ? { herdr: new HerdrBridge({ runner: demoHerdrRunner, logger: log }) } : {}),
+});
 const link = new RelayLink({
   url: `ws://127.0.0.1:${port}/ws`,
   agentId: values['agent-id']!,
@@ -116,11 +158,14 @@ const link = new RelayLink({
 });
 link.start();
 
-process.on('SIGINT', () => {
+let stopping = false;
+const shutdown = async () => {
+  if (stopping) return;
+  stopping = true;
+  await core.closeAll();
   link.stop();
-  void relay.close().then(() => process.exit(0));
-});
-process.on('SIGTERM', () => {
-  link.stop();
-  void relay.close().then(() => process.exit(0));
-});
+  await relay.close();
+  process.exit(0);
+};
+process.on('SIGINT', () => void shutdown());
+process.on('SIGTERM', () => void shutdown());

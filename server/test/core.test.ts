@@ -43,8 +43,7 @@ beforeEach(() => {
   core.setEmitter((msg, to) => sent.push({ msg, to }));
 });
 
-async function req(clientId: string, msg: ClientMessage): Promise<AgentMessage> {
-  const id = String(Math.random());
+async function req(clientId: string, msg: ClientMessage): Promise<AgentMessage> {  const id = String(Math.random());
   await core.handle(clientId, { ...msg, id });
   const reply = sent.find((s) => 'id' in s.msg && s.msg.id === id);
   assert.ok(reply, 'no reply for ' + msg.type);
@@ -249,5 +248,45 @@ describe('AgentCore', () => {
   it('reports errors for unknown sessions and request types', async () => {
     assert.equal((await req('c1', { type: 'send', sessionId: 'nope', text: 'x' })).kind, 'error');
     assert.equal((await req('c1', { type: 'bogus' } as unknown as ClientMessage)).kind, 'error');
+  });
+});
+
+describe('AgentCore emitter fan-out', () => {
+  it('delivers one message to every attached relay link', async () => {
+    // Two relays (LAN + public) must both see the same outbound stream; a
+    // single-slot emitter would let the second link steal the first's frames.
+    const first: AgentMessage[] = [];
+    const second: AgentMessage[] = [];
+    core.addEmitter((msg) => first.push(msg));
+    core.addEmitter((msg) => second.push(msg));
+
+    await core.handle('c1', { type: 'list_sessions', id: 'fan-1' });
+
+    assert.ok(first.some((m) => 'id' in m && m.id === 'fan-1'), 'first link missed the reply');
+    assert.ok(second.some((m) => 'id' in m && m.id === 'fan-1'), 'second link missed the reply');
+  });
+
+  it('stops delivering to a link once its detach function is called', async () => {
+    // stop() must not leave a closed socket registered.
+    const kept: AgentMessage[] = [];
+    const removed: AgentMessage[] = [];
+    core.addEmitter((msg) => kept.push(msg));
+    const detach = core.addEmitter((msg) => removed.push(msg));
+
+    detach();
+    await core.handle('c1', { type: 'list_sessions', id: 'fan-2' });
+
+    assert.ok(kept.some((m) => 'id' in m && m.id === 'fan-2'));
+    assert.equal(removed.length, 0, 'detached emitter still received frames');
+  });
+
+  it('keeps setEmitter as replace-everything for single-link callers', async () => {
+    const replaced: AgentMessage[] = [];
+    core.addEmitter(() => {});
+    core.setEmitter((msg) => replaced.push(msg));
+
+    await core.handle('c1', { type: 'list_sessions', id: 'fan-3' });
+
+    assert.ok(replaced.some((m) => 'id' in m && m.id === 'fan-3'));
   });
 });

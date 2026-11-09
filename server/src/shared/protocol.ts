@@ -105,6 +105,9 @@ export type SessionStatus =
   | 'closed';
 
 export type SessionInfo = {
+  kind?: 'claude' | 'terminal';
+  cols?: number;
+  rows?: number;
   id: string;
   title: string;
   cwd: string;
@@ -128,6 +131,7 @@ export type Question = {
 };
 
 export type EventBody =
+  | { kind: 'terminal_output'; data: string }
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string }
   | { kind: 'thinking'; text: string }
@@ -170,7 +174,148 @@ export type SessionEvent = EventBody & { seq: number; ts: number };
 
 export type PermissionDecision = 'allow' | 'allow_always' | 'deny';
 
+// ---------------------------------------------------------------------------
+// Herdr (local terminal workspace manager) — additive since PROTOCOL_VERSION 1.
+// The desktop agent bridges these onto the installed `herdr` CLI. See
+// .trellis/tasks/10-12-herdr-mobile/design.md.
+// ---------------------------------------------------------------------------
+
+export type HerdrAgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
+export type HerdrReadSource = 'visible' | 'recent' | 'recent-unwrapped' | 'detection';
+
+export type HerdrAvailability = {
+  available: boolean;
+  installed: boolean;
+  version?: string;
+  protocol?: number;
+  socket?: string;
+  serverRunning: boolean;
+  canControl: boolean;
+  /** Actionable Chinese message when `canControl` is false. */
+  reason?: string;
+};
+
+export type HerdrWorkspace = {
+  workspaceId: string;
+  label: string;
+  number: number;
+  focused: boolean;
+  agentStatus: HerdrAgentStatus;
+  paneCount: number;
+  tabCount: number;
+  activeTabId?: string;
+};
+
+export type HerdrTab = {
+  tabId: string;
+  workspaceId: string;
+  label: string;
+  number: number;
+  focused: boolean;
+  agentStatus: HerdrAgentStatus;
+  paneCount: number;
+};
+
+export type HerdrPane = {
+  paneId: string;
+  workspaceId: string;
+  tabId: string;
+  cwd: string;
+  focused: boolean;
+  terminalTitle: string;
+  agent?: string;
+  agentStatus?: HerdrAgentStatus;
+  name?: string;
+  interactiveReady?: boolean;
+  scroll?: { offsetFromBottom: number; maxOffsetFromBottom: number; viewportRows: number };
+};
+
+export type HerdrAgent = {
+  /** Name when the agent was named, otherwise the hosting pane id. */
+  target: string;
+  paneId: string;
+  workspaceId: string;
+  tabId: string;
+  cwd: string;
+  agentKind: string;
+  status: HerdrAgentStatus;
+  focused: boolean;
+  terminalTitle: string;
+  name?: string;
+  interactiveReady?: boolean;
+  completionSeq?: number;
+  stateChangeSeq?: number;
+};
+
+export type HerdrLayout = {
+  workspaceId: string;
+  tabId: string;
+  zoomed: boolean;
+  focusedPaneId?: string;
+  area: { x: number; y: number; width: number; height: number };
+  panes: { paneId: string; focused: boolean; rect: { x: number; y: number; width: number; height: number } }[];
+  splits: { id: string; direction: string; ratio: number }[];
+};
+
+/**
+ * Lifecycle controls. Deliberately excludes interactive attach/takeover and
+ * `--machine`/`--remote` forwarding (out of scope, documented on the phone).
+ */
+export type HerdrAction =
+  | { kind: 'workspace_create'; label?: string; cwd?: string; focus?: boolean }
+  | { kind: 'workspace_rename'; workspaceId: string; label: string }
+  | { kind: 'workspace_focus'; workspaceId: string }
+  | { kind: 'workspace_close'; workspaceId: string; group?: boolean }
+  | { kind: 'tab_create'; workspaceId: string; label?: string; cwd?: string; focus?: boolean }
+  | { kind: 'tab_rename'; tabId: string; label: string }
+  | { kind: 'tab_focus'; tabId: string }
+  | { kind: 'tab_close'; tabId: string }
+  | { kind: 'pane_split'; paneId: string; direction: 'right' | 'down'; ratio?: number; cwd?: string; focus?: boolean }
+  | { kind: 'pane_focus'; paneId: string }
+  | { kind: 'pane_zoom'; paneId?: string; mode: 'toggle' | 'on' | 'off' }
+  | { kind: 'pane_rename'; paneId: string; label?: string }
+  | { kind: 'pane_close'; paneId: string }
+  | { kind: 'pane_resize'; paneId: string; direction: 'left' | 'right' | 'up' | 'down'; amount?: number }
+  | {
+      kind: 'pane_move';
+      paneId: string;
+      to: 'new_tab' | 'new_workspace' | 'tab';
+      tabId?: string;
+      split?: 'right' | 'down';
+      label?: string;
+    }
+  | { kind: 'agent_start'; name: string; agentKind: string; paneId: string; args?: string[] }
+  | { kind: 'agent_rename'; target: string; name?: string }
+  | { kind: 'agent_focus'; target: string };
+
 export type ClientRequest =
+  | { type: 'herdr_info'; force?: boolean }
+  | { type: 'herdr_workspaces' }
+  | { type: 'herdr_tabs'; workspaceId: string }
+  | { type: 'herdr_panes'; workspaceId: string }
+  | { type: 'herdr_agents' }
+  | { type: 'herdr_agent'; target: string }
+  | { type: 'herdr_layout'; paneId: string }
+  | { type: 'herdr_read'; paneId: string; source?: HerdrReadSource; lines?: number }
+  | { type: 'herdr_prompt'; target: string; text: string; wait?: boolean; timeoutMs?: number }
+  | { type: 'herdr_send_text'; paneId: string; text: string; paste?: boolean }
+  | { type: 'herdr_send_keys'; target: string; keys: string[]; repeat?: number }
+  | { type: 'herdr_run'; paneId: string; command: string }
+  | { type: 'herdr_wait'; target: string; until?: HerdrAgentStatus[]; timeoutMs?: number }
+  | { type: 'herdr_act'; action: HerdrAction }
+  // Selects the pane whose live output is streamed to this client. Omit or null
+  // to stop streaming content; structure pushes continue either way.
+  | { type: 'herdr_watch'; paneId?: string | null }
+  | { type: 'codex_projects'; cursor?: string }
+  | { type: 'codex_threads'; projectId?: string; cursor?: string }
+  | { type: 'codex_read'; threadId: string; cursor?: string }
+  | { type: 'codex_resume'; threadId: string }
+  | { type: 'codex_send'; threadId: string; text: string; turnId?: string }
+  | { type: 'codex_interrupt'; threadId: string; turnId: string }
+  | { type: 'codex_respond'; threadId: string; requestId: string; decision: 'accept' | 'decline' | 'cancel'; answers?: Record<string, string[]> }
+  | { type: 'create_terminal'; cwd: string; cols?: number; rows?: number }
+  | { type: 'terminal_input'; sessionId: string; data: string }
+  | { type: 'terminal_resize'; sessionId: string; cols: number; rows: number }
   | { type: 'info' }
   | { type: 'list_sessions' }
   | { type: 'list_history'; cwd?: string }
@@ -210,7 +355,74 @@ export type HistoryItem = {
   lastModified: number;
 };
 
+export type CodexAvailability = { available: boolean; canControl: boolean; reason?: string };
+export type CodexProject = { id: string; title: string; roots: string[] };
+export type CodexThread = {
+  id: string;
+  projectId?: string;
+  title: string;
+  cwd: string;
+  updatedAt: number;
+  status: string;
+  canAcceptDirectInput: boolean;
+  canResume: boolean;
+  activeTurnId?: string;
+};
+export type CodexItem = {
+  id: string;
+  kind: 'user' | 'assistant' | 'thinking' | 'tool' | 'system' | 'error' | 'unknown';
+  text: string;
+  toolName?: string;
+};
+export type CodexTurn = { id: string; status: string; items: CodexItem[] };
+export type CodexPendingRequest = {
+  requestId: string;
+  kind: 'command' | 'fileChange' | 'userInput' | 'permissions' | 'unsupported';
+  title: string;
+  description?: string;
+  canAccept: boolean;
+  questions?: { id: string; question: string; header?: string; isSecret?: boolean; isOther?: boolean; options: QuestionOption[] }[];
+};
+
 export type AgentMessage =
+  | { kind: 'herdr_info'; id?: string; availability: HerdrAvailability }
+  | { kind: 'herdr_workspaces'; id?: string; workspaces: HerdrWorkspace[] }
+  | { kind: 'herdr_tabs'; id?: string; workspaceId: string; tabs: HerdrTab[] }
+  | { kind: 'herdr_panes'; id?: string; workspaceId: string; panes: HerdrPane[] }
+  | { kind: 'herdr_agents'; id?: string; agents: HerdrAgent[] }
+  | { kind: 'herdr_agent'; id?: string; agent: HerdrAgent }
+  | { kind: 'herdr_layout'; id?: string; layout: HerdrLayout }
+  | { kind: 'herdr_output'; id?: string; paneId: string; source: HerdrReadSource; text: string }
+  | { kind: 'herdr_result'; id?: string; action: string; summary: string; data?: unknown }
+  // -- pushes (no request id; unsolicited) ---------------------------------
+  // Pane content. `reset` means "replace everything with chunk"; otherwise the
+  // receiver keeps the first `prefix` characters it already has and appends.
+  // `format` is `ansi` for the snapshot stream: chunk carries escape sequences
+  // and must be replayed, not treated as plain text.
+  | {
+      kind: 'herdr_pane_output';
+      paneId: string;
+      revision: number;
+      format: string;
+      reset: boolean;
+      prefix: number;
+      chunk: string;
+    }
+  // A structure change. Only the parts that changed are present, so the phone
+  // patches its caches instead of re-listing.
+  | {
+      kind: 'herdr_structure';
+      workspaceId?: string;
+      workspaces?: HerdrWorkspace[];
+      agents?: HerdrAgent[];
+      tabs?: HerdrTab[];
+      panes?: HerdrPane[];
+    }
+  | { kind: 'codex_projects'; id?: string; projects: CodexProject[]; nextCursor?: string }
+  | { kind: 'codex_threads'; id?: string; threads: CodexThread[]; nextCursor?: string }
+  | { kind: 'codex_thread'; id?: string; thread: CodexThread; turns: CodexTurn[]; nextCursor?: string; pendingRequests?: CodexPendingRequest[] }
+  | { kind: 'codex_changed'; threadId?: string }
+  | { kind: 'codex_pending'; threadId: string; requests: CodexPendingRequest[] }
   | { kind: 'ack'; id?: string }
   | { kind: 'error'; id?: string; message: string }
   | {
@@ -222,6 +434,9 @@ export type AgentMessage =
       roots: string[];
       allowBypass: boolean;
       version: number;
+      capabilities?: string[];
+      codex?: CodexAvailability;
+      herdr?: HerdrAvailability;
     }
   | { kind: 'sessions'; id?: string; sessions: SessionInfo[] }
   | { kind: 'history'; id?: string; items: HistoryItem[] }

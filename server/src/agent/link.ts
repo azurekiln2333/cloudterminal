@@ -53,11 +53,15 @@ export class RelayLink {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private watchdog: NodeJS.Timeout | null = null;
   private pairWaiters: Array<{ resolve(c: PairCode): void; reject(e: Error): void }> = [];
+  /** Detaches this link's sink from the core; null while stopped. */
+  private detachEmitter: (() => void) | null = null;
 
   constructor(opts: RelayLinkOptions) {
     this.opts = opts;
     this.log = opts.logger ?? silentLogger;
-    opts.core.setEmitter((msg, to) => this.emit(msg, to));
+    // The sink is registered in start(), not here: an agent can hold several
+    // links at once (LAN + public relay), and attaching in the constructor
+    // would make the last-constructed link own every outbound frame.
   }
 
   get isOnline(): boolean {
@@ -66,11 +70,15 @@ export class RelayLink {
 
   start(): void {
     this.stopped = false;
+    this.detachEmitter ??= this.opts.core.addEmitter((msg, to) => this.emit(msg, to));
     this.connect();
   }
 
   stop(): void {
     this.stopped = true;
+    // Detach before closing so no frame is queued onto a dying socket.
+    this.detachEmitter?.();
+    this.detachEmitter = null;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.watchdog) clearTimeout(this.watchdog);
     this.ws?.close(1000, 'agent shutting down');
@@ -94,8 +102,8 @@ export class RelayLink {
   private emit(msg: AgentMessage, to?: string): void {
     if (!this.online || this.ws?.readyState !== WebSocket.OPEN) return; // clients resync on reconnect
     const frame = JSON.stringify(to ? { t: 'msg', to, data: msg } : { t: 'msg', data: msg });
-    if (frame.length > MAX_FRAME_BYTES) {
-      this.log.warn('dropping oversized frame', { kind: msg.kind, bytes: frame.length });
+    if (Buffer.byteLength(frame) > MAX_FRAME_BYTES) {
+      this.log.warn('dropping oversized frame', { kind: msg.kind, bytes: Buffer.byteLength(frame) });
       if ('id' in msg && to) this.emit({ kind: 'error', id: msg.id, message: 'response too large' }, to);
       return;
     }

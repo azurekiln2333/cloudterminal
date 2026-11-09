@@ -57,7 +57,7 @@ export type QueryOptionsLike = {
 export type QueryHandle = AsyncIterable<unknown> & {
   interrupt(): Promise<unknown>;
   setPermissionMode(mode: PermissionModeName): Promise<void>;
-  close(): void;
+  close(): void | Promise<void>;
 };
 
 export type QueryFn = (params: { prompt: AsyncIterable<SdkUserMessage>; options: QueryOptionsLike }) => QueryHandle;
@@ -66,10 +66,20 @@ export type QueryFn = (params: { prompt: AsyncIterable<SdkUserMessage>; options:
 
 export const MAX_EVENTS = 2000;
 
+export interface ManagedSession {
+  readonly id: string;
+  readonly updatedAt: number;
+  readonly status: SessionStatus;
+  info(): SessionInfo;
+  eventsAfter(afterSeq: number): { events: SessionEvent[]; reset: boolean };
+  interrupt(): Promise<void>;
+  close(): void | Promise<void>;
+}
+
 export type SessionListener = {
-  onEvent(session: Session, event: SessionEvent): void;
-  onDelta(session: Session, text: string): void;
-  onState(session: Session): void;
+  onEvent(session: ManagedSession, event: SessionEvent): void;
+  onDelta(session: ManagedSession, text: string): void;
+  onState(session: ManagedSession): void;
 };
 
 export type SessionOptions = {
