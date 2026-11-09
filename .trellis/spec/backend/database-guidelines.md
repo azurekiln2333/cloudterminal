@@ -1,5 +1,7 @@
 # Persistence Guidelines
 
+> **Repo split (2026-11-09).** The public relay server — its account, database and OAuth stack, the container image, the Compose/Caddy deployment files and the image-publishing CI — now lives in the separate `cloudterminal-relay-server` repository; the MySQL schema, migrations and account tables described below moved with it. This repository keeps only the PC agent plus a 5-file copy of the relay core (`server/src/relay/relay.ts` and `server/src/shared/{relay-protocol,protocol-account,crypto,log}.ts`) so the agent can serve the LAN entry in-process. Never edit those copies here: change them in `cloudterminal-relay-server` first, then run `cd server && npm run sync-relay -- <path-to-cloudterminal-relay-server>`; `server/test/relay-core-sync.test.ts` fails when a copy and `server/relay-core.json` disagree.
+
 There is no application database, ORM or migration system. `server/src/relay/relay.ts` stores registrations, clients, pairing and throttling in memory. `server/src/agent/core.ts` keeps live sessions/subscriptions in memory. Claude history is loaded through `HistoryLoader` and `server/src/agent/sdk.ts`, not a relay database.
 
 ## Scope / Trigger

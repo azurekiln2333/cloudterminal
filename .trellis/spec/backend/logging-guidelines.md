@@ -15,4 +15,4 @@ Sources: `server/src/agent/core.ts`, `server/src/agent/link.ts`, `server/src/rel
 - Warn: rejected requests/credentials, socket errors, retries, oversized frames.
 - Error: relay rejection or conflicting agent identity preventing progress.
 
-Select fields deliberately: logger does not redact. Do not log complete handshake frames, secrets, relay keys or transcript bodies. `server/src/relay/main.ts` reports relay-key state as required/off, never its value. Deliberate CLI pairing instructions are separate from routine network logs.
+Select fields deliberately: logger does not redact. Do not log complete handshake frames, secrets, relay keys or transcript bodies. The relay entrypoint in `cloudterminal-relay-server` (`src/relay/main.ts`) reports relay-key state as required/off, never its value. Deliberate CLI pairing instructions are separate from routine network logs.

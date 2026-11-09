@@ -1,6 +1,11 @@
 # 中继对外部署：三种让手机连上家里的方式
 
-本文只讲**怎么把中继暴露给手机**。中继本身的部署步骤、初始化、查看注册密钥等内容见 [README.md](./README.md)。
+本文只讲**怎么把中继暴露给手机**。中继本身的部署步骤、初始化、查看注册密钥等内容在服务端仓库 [cloudterminal-relay-server](https://github.com/azurekiln2333/cloudterminal-relay-server) 的 README 里；本文提到的 `compose*.yml`、`.env.example`、`deploy/Caddyfile` 也都在那个仓库的根目录。
+
+本文里两件事分属两个仓库，别弄混：
+
+- **服务器上的中继**（方式 A）：代码与部署文件在服务端仓库。
+- **本机电脑上的中继**（Agent 内嵌的局域网入口，方式 B 的本地部分）：就在本仓库，`server/scripts/tunnel-relay.ps1` 会以 `--local-relay` 模式启动 Agent。
 
 CloudTerminal 的电脑 Agent 是**主动外连**中继的，所以电脑这一侧**永远不需要**开入站端口、端口映射或公网 IP。真正要解决的问题只有一个：**手机怎么访问到中继**。下面三种方式按门槛从低到高排列，选一种即可。
 
@@ -20,10 +25,11 @@ CloudTerminal 的电脑 Agent 是**主动外连**中继的，所以电脑这一�
 
 1. 把域名解析到服务器（A / AAAA 记录）。
 2. 在云服务器安全组和系统防火墙开放 **TCP 80 和 443**，并确认没有其他服务占用。
-3. 上传 `server/` 目录到服务器，进入该目录：
+3. 在服务器上取服务端仓库，进入仓库根目录（部署文件就在根目录）：
 
    ```sh
-   cd /opt/cloudterminal/server
+   git clone https://github.com/azurekiln2333/cloudterminal-relay-server
+   cd cloudterminal-relay-server
    ```
 
 4. 复制并填写域名（不要带 `https://` 或路径）：
@@ -76,7 +82,7 @@ Caddy 自动申请和续期证书，公网只暴露 80/443，中继的 8787 端�
 
 - 本机能访问外网。
 - 安装 `cloudflared`（Windows：`winget install --id Cloudflare.cloudflared`；macOS：`brew install cloudflared`；Linux 见官方文档）。
-- 本机先按 [README.md](./README.md) 的“局域网 / VPN 部署”把中继起起来（默认 `8787`）：
+- 本机先按服务端仓库 README 的“局域网 / VPN 部署”把中继起起来（默认 `8787`）：
 
   ```sh
   docker compose pull
@@ -166,7 +172,7 @@ wss://random-words.trycloudflare.com/ws
 
 2. 在**手机**上安装 Tailscale App，登录**同一个账号 / tailnet**。
 
-3. 中继监听在所有网卡的 `8787`（README 的默认部署已满足）。记下中继机器的 Tailscale IP，例如 `100.101.102.103`。
+3. 中继监听在所有网卡的 `8787`（服务端仓库 README 的默认部署已满足）。记下中继机器的 Tailscale IP，例如 `100.101.102.103`。
 
 ### 手机 / 电脑要填的地址
 

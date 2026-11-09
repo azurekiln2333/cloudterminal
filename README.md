@@ -11,7 +11,7 @@
 ```
 
 - **Agent**（`server/src/agent`）跑在电脑上，用真实 PTY 启动终端；Claude 专用模式通过官方 SDK 驱动。它**主动连出去**到中继，所以电脑不需要公网 IP、端口映射或改路由器。
-- **Relay**（`server/src/relay`）跑在一台有公网地址的服务器上，只负责认证和转发，不解析会话内容。
+- **Relay** 只负责认证和转发，不解析会话内容。公网中继独立在 [cloudterminal-relay-server](https://github.com/azurekiln2333/cloudterminal-relay-server) 仓库；本仓库保留一份中继核心副本（`server/src/relay/relay.ts` 等），供 Agent 在进程内提供局域网入口。
 - **App**（`lib/`）是 Flutter 手机端，UI 风格与 terminax 一致（同一套 MD3 主题）。
 
 ## 能做什么
@@ -74,38 +74,15 @@ macOS / Linux 请将 `--root`、`--cwd` 换成自己的目录。配对后，在�
 
 ### 公网中继服务器（推荐外出使用）
 
-服务器使用预构建镜像。只需上传 `server/compose.yml`、`server/compose.tls.yml`、`server/.env.example` 和公网入口需要的 `server/deploy/Caddyfile`，保持相对目录结构。
+公网中继单独放在 **[cloudterminal-relay-server](https://github.com/azurekiln2333/cloudterminal-relay-server)**：镜像与 GitHub Actions 发布、`compose.yml` / `compose.tls.yml`、`.env.example`、Caddy 配置、账号与数据库、升级和排障说明都在那个仓库里，部署直接照它的 [README](https://github.com/azurekiln2333/cloudterminal-relay-server#readme) 做。
 
-先通过 [GitHub Actions](.github/workflows/image.yml) 或 [CNB](.cnb.yml) 发布镜像，并在 `.env` 设置 `RELAY_IMAGE=实际镜像地址:版本`。当前仓库没有配置 git remote，尚无 CI 发布记录；示例镜像地址需要首次发布成功后才能拉取。
+本仓库只保留电脑端需要的中继核心副本：`server/src/relay/relay.ts` 与 `server/src/shared/{relay-protocol,protocol-account,crypto,log}.ts`。局域网入口由 Agent 在进程内直接运行这份副本，不需要 Docker，也不需要公网服务器。
 
-服务器安装 Docker Engine 和 Compose 插件后，进入上传的目录。公网部署先将域名解析到服务器，放行 TCP 80/443：
+副本以服务端仓库为准：先在服务端仓库改，再在 `server/` 里运行 `npm run sync-relay -- <服务端仓库目录>` 同步；`server` 的 `npm test` 会检查副本与服务端仓库是否一致。镜像由服务端仓库的 CI 发布，首次发布之前镜像还不存在，需要按那份 README 自行构建。
 
-```bash
-cd server
-cp .env.example .env
-```
+服务器部署完成后，电脑首次向导选择「连接中继」，填 `wss://你的域名/ws` 和服务器上显示的注册密钥；手机使用同一地址加电脑显示的短配对码。**注册密钥填电脑，短配对码填手机。**
 
-编辑 `.env`，填写 `RELAY_DOMAIN=你的域名`，然后运行：
-
-```bash
-docker compose -f compose.tls.yml pull
-docker compose -f compose.tls.yml up -d
-docker compose -f compose.tls.yml exec relay node src/relay/show-key.ts
-```
-
-Caddy 自动处理证书，只公开 80/443。电脑首次向导选择连接中继，填写 `wss://你的域名/ws` 和第二条命令显示的注册密钥；手机使用同一地址和电脑显示的短配对码。**注册密钥填电脑，短配对码填手机。**
-
-局域网 / VPN 不需要域名，同样在 `server/` 目录运行：
-
-```bash
-docker compose pull
-docker compose up -d
-docker compose exec relay node src/relay/show-key.ts
-```
-
-此入口使用 `ws://服务器IP:8787/ws`。密钥保存在 Docker 持久卷中，重启复用。两个 Compose 文件是独立入口；切换时先停止旧入口并保留卷。项目名固定为 `cloudterminal`，旧部署若使用自定义项目名，需要继续传入同一名称以复用数据卷。
-
-GitHub / CNB 镜像发布、显式本地构建、Windows 连接、升级和排障说明见 [服务端部署说明](server/README.md)。
+局域网 / VPN / 隧道怎么把中继暴露给手机，见 [中继对外部署](server/TUNNEL.md)。
 
 ### Agent 参数
 
