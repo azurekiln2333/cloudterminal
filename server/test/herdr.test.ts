@@ -6,6 +6,7 @@
 // field names breaks these tests.
 
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -969,7 +970,16 @@ describe('herdr probe fixtures', () => {
   // Tests run with cwd = server/, so walk up to the repo root.
   const dir = path.resolve('..', '.build', 'pi-herdr', 'herdr-probe');
 
-  it('parses every recorded live probe file', async () => {
+  it('parses every recorded live probe file', async (t) => {
+    // `.build/` is a local scratch directory and is not committed, so a fresh
+    // clone does not have these recordings. Skip instead of failing so the rest
+    // of the suite still runs; record them again with
+    // `CLOUDTERMINAL_HERDR_SMOKE=1 node scripts/herdr-smoke.ts` on a machine
+    // that has Herdr installed if you need to re-run this case.
+    if (!existsSync(path.join(dir, 'workspace-list.json')) || !existsSync(path.join(dir, 'agent-list.json'))) {
+      t.skip(`no recorded probe fixtures under ${dir} (${path.relative(process.cwd(), dir)} is not committed)`);
+      return;
+    }
     const workspaceList = JSON.parse(await readFile(path.join(dir, 'workspace-list.json'), 'utf8'));
     const agentList = JSON.parse(await readFile(path.join(dir, 'agent-list.json'), 'utf8'));
     assert.ok(Array.isArray(workspaceList.result.workspaces));
