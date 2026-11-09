@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验收时逐项检查"}
+{"file": ".trellis/spec/backend/deployment.md", "reason": "核对镜像地址和 compose 默认值"}

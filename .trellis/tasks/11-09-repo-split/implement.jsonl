@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "server/ 下 relay、agent、shared、db、oauth 的分层，用来确定拆分边界"}
+{"file": ".trellis/spec/backend/deployment.md", "reason": "镜像、compose、CI 的部署约定，拆到服务端仓库后仍要遵守"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试和类型检查要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "协议跨层一致：拆出 relay-protocol 后，两端字段不能对不上"}
