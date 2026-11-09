@@ -9,6 +9,14 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+# The Windows assistant is a separate package with its own pubspec.yaml and
+# analysis_options.yaml: analyze it inside apps/cloudterminal_windows, not here.
+# Without this exclude, `flutter analyze` at the repo root reports that app's
+# imports as errors because the root package config has none of its deps.
+analyzer:
+  exclude:
+    - apps/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

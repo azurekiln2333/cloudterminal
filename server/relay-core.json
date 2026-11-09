@@ -1,6 +1,6 @@
 {
   "source": "https://github.com/azurekiln2333/cloudterminal-relay-server",
-  "commit": "fcd073d04e183c24ac7236d388099ff0cf27d714",
+  "commit": "841cc86e8fdf0461b2ff73e379b051740b21570a",
   "files": {
     "src/relay/relay.ts": "c204a785e7f9dbbbed6d3046fb8d52d966bbb9d46fd47ec20cc0491ca8125ae6",
     "src/shared/relay-protocol.ts": "7ed809a73b8b933f7aac49bd3de139838de110a7ad095d218ebcafa629eba881",

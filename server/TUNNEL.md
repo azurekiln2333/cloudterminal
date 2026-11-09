@@ -1,6 +1,6 @@
 # 中继对外部署：三种让手机连上家里的方式
 
-本文只讲**怎么把中继暴露给手机**。中继本身的部署步骤、初始化、查看注册密钥等内容在服务端仓库 [cloudterminal-relay-server](https://github.com/azurekiln2333/cloudterminal-relay-server) 的 README 里；本文提到的 `compose*.yml`、`.env.example`、`deploy/Caddyfile` 也都在那个仓库的根目录。
+本文只讲**怎么把中继暴露给手机**。中继本身的部署步骤、初始化、查看注册密钥等内容在服务端仓库 [cloudterminal-relay-server](https://github.com/azurekiln2333/cloudterminal-relay-server) 的 README 里；本文提到的 `compose*.yml`、`.env.example` 在服务端仓库的根目录，`Caddyfile` 在服务端仓库的 `deploy/` 目录下（`deploy/Caddyfile`）。
 
 本文里两件事分属两个仓库，别弄混：
 
