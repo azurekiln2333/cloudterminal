@@ -7,7 +7,7 @@ import '../util/format.dart';
 import 'dir_picker_sheet.dart';
 import 'section_label.dart';
 
-/// Start a Claude session on the PC. Returns the created session.
+/// Start a terminal or Claude session on the PC. Returns the created session.
 Future<SessionInfo?> showNewSessionSheet(
   BuildContext context,
   RemoteController controller, {
@@ -16,6 +16,10 @@ Future<SessionInfo?> showNewSessionSheet(
   return showModalBottomSheet<SessionInfo>(
     context: context,
     isScrollControlled: true,
+    // A visible grab handle: without one the sheet looked like a dead panel on
+    // the phone, and the only way out was the system back gesture.
+    showDragHandle: true,
+    useSafeArea: true,
     builder: (context) => _NewSessionSheet(
       controller: controller,
       initialCwd: initialCwd ?? controller.agent?.defaultCwd ?? '',
@@ -37,6 +41,8 @@ class _NewSessionSheetState extends State<_NewSessionSheet> {
   late String _cwd = widget.initialCwd;
   final TextEditingController _prompt = TextEditingController();
   String _mode = PermissionModes.defaultMode;
+  late bool _terminal =
+      widget.controller.agent?.capabilities.contains('terminal') ?? false;
   bool _busy = false;
   String? _error;
 
@@ -52,20 +58,31 @@ class _NewSessionSheetState extends State<_NewSessionSheet> {
       widget.controller,
       initialPath: _cwd,
     );
-    if (picked != null && mounted) setState(() => _cwd = picked);
+    if (picked != null && mounted) {
+      setState(() {
+        _cwd = picked;
+        // A previous failure no longer describes the form on screen.
+        _error = null;
+      });
+    }
   }
 
   Future<void> _start() async {
+    // Drop the keyboard before the modal closes, otherwise it stays up over the
+    // session that is about to open behind it.
+    FocusScope.of(context).unfocus();
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final session = await widget.controller.createSession(
-        cwd: _cwd,
-        prompt: _prompt.text,
-        mode: _mode,
-      );
+      final session = _terminal
+          ? await widget.controller.createTerminal(cwd: _cwd)
+          : await widget.controller.createSession(
+              cwd: _cwd,
+              prompt: _prompt.text,
+              mode: _mode,
+            );
       if (mounted) Navigator.of(context).pop(session);
     } on RemoteException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -97,11 +114,33 @@ class _NewSessionSheetState extends State<_NewSessionSheet> {
               Text('新建会话', style: theme.textTheme.titleLarge),
               const SizedBox(height: 4),
               Text(
-                '在 ${widget.controller.agentName} 上启动 Claude Code。',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
+                '在 ${widget.controller.agentName} 上启动${_terminal ? '终端，可运行任意命令行工具' : ' Claude Code'}。',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
               const SizedBox(height: 18),
+              if (widget.controller.agent?.capabilities.contains('terminal') ??
+                  false) ...<Widget>[
+                SegmentedButton<bool>(
+                  segments: const <ButtonSegment<bool>>[
+                    ButtonSegment(
+                      value: true,
+                      label: Text('终端'),
+                      icon: Icon(Icons.terminal),
+                    ),
+                    ButtonSegment(value: false, label: Text('Claude')),
+                  ],
+                  selected: <bool>{_terminal},
+                  onSelectionChanged: _busy
+                      ? null
+                      : (v) => setState(() {
+                          _terminal = v.single;
+                          _error = null;
+                        }),
+                ),
+                const SizedBox(height: 18),
+              ],
               const SectionLabel('工作目录'),
               const SizedBox(height: 8),
               Material(
@@ -153,46 +192,48 @@ class _NewSessionSheetState extends State<_NewSessionSheet> {
                 ),
               ),
               const SizedBox(height: 18),
-              const SectionLabel('要做什么'),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _prompt,
-                minLines: 3,
-                maxLines: 8,
-                textInputAction: TextInputAction.newline,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  hintText: '例如：修复登录页的单元测试并提交',
+              if (!_terminal) ...<Widget>[
+                const SectionLabel('要做什么'),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _prompt,
+                  minLines: 3,
+                  maxLines: 8,
+                  textInputAction: TextInputAction.newline,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    hintText: '例如：修复登录页的单元测试并提交',
+                  ),
                 ),
-              ),
-              const SizedBox(height: 18),
-              const SectionLabel('权限模式'),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _mode,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.shield_outlined),
+                const SizedBox(height: 18),
+                const SectionLabel('权限模式'),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: _mode,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.shield_outlined),
+                  ),
+                  items: <DropdownMenuItem<String>>[
+                    for (final m in modes)
+                      DropdownMenuItem<String>(
+                        value: m,
+                        child: Text(PermissionModes.label(m)),
+                      ),
+                  ],
+                  onChanged: _busy ? null : (m) => setState(() => _mode = m!),
                 ),
-                items: <DropdownMenuItem<String>>[
-                  for (final m in modes)
-                    DropdownMenuItem<String>(
-                      value: m,
-                      child: Text(PermissionModes.label(m)),
-                    ),
-                ],
-                onChanged: _busy ? null : (m) => setState(() => _mode = m!),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                PermissionModes.description(_mode),
-                style: TextStyle(
-                  fontSize: 12,
-                  color: _mode == PermissionModes.bypass
-                      ? scheme.error
-                      : scheme.onSurfaceVariant,
+                const SizedBox(height: 6),
+                Text(
+                  PermissionModes.description(_mode),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _mode == PermissionModes.bypass
+                        ? scheme.error
+                        : scheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
+              ],
               if (_error != null) ...<Widget>[
                 const SizedBox(height: 14),
                 Text(_error!, style: TextStyle(color: scheme.error)),
@@ -210,8 +251,20 @@ class _NewSessionSheetState extends State<_NewSessionSheet> {
                         ),
                       )
                     : const Icon(Icons.play_arrow_rounded),
-                label: Text(_prompt.text.trim().isEmpty ? '启动' : '启动并发送'),
+                label: Text(
+                  _terminal || _prompt.text.trim().isEmpty ? '启动' : '启动并发送',
+                ),
               ),
+              // A disabled button with no explanation is a dead end: say what is
+              // missing instead of leaving the user to guess.
+              if (_cwd.isEmpty) ...<Widget>[
+                const SizedBox(height: 8),
+                Text(
+                  '先选择工作目录才能启动。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                ),
+              ],
             ],
           ),
         ),

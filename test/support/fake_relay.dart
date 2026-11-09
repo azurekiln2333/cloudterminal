@@ -32,9 +32,9 @@ class FakeSocket implements RelaySocket {
 
   /// Messages (the `data` of msg frames) the app sent.
   List<Map<String, dynamic>> get requests => <Map<String, dynamic>>[
-        for (final f in sent)
-          if (f['t'] == 'msg') f['data'] as Map<String, dynamic>,
-      ];
+    for (final f in sent)
+      if (f['t'] == 'msg') f['data'] as Map<String, dynamic>,
+  ];
 
   Map<String, dynamic>? lastRequest(String type) {
     for (final r in requests.reversed) {
@@ -65,23 +65,26 @@ Map<String, dynamic> sessionJson(
   String title = 'Fix tests',
   int updatedAt = 1000,
   String mode = 'default',
-}) =>
-    <String, dynamic>{
-      'id': id,
-      'title': title,
-      'cwd': r'C:\work\app',
-      'status': status,
-      'mode': mode,
-      'createdAt': 1,
-      'updatedAt': updatedAt,
-      'costUsd': 0.12,
-      'pending': pending,
-      'lastSeq': 0,
-    };
+  String kind = 'claude',
+}) => <String, dynamic>{
+  'id': id,
+  'kind': kind,
+  'title': title,
+  'cwd': r'C:\work\app',
+  'status': status,
+  'mode': mode,
+  'createdAt': 1,
+  'updatedAt': updatedAt,
+  'costUsd': 0.12,
+  'pending': pending,
+  'lastSeq': 0,
+};
 
 /// A socket that behaves like a healthy agent: accepts hello, answers
 /// info / list_sessions / subscribe / everything else with ack.
 FakeSocket healthyAgent({
+  Map<String, dynamic>? codex,
+  List<String> capabilities = const <String>[],
   List<Map<String, dynamic>> sessions = const <Map<String, dynamic>>[],
   Map<String, List<Map<String, dynamic>>> backlog =
       const <String, List<Map<String, dynamic>>>{},
@@ -89,12 +92,14 @@ FakeSocket healthyAgent({
   final socket = FakeSocket();
   socket.onSend = (s, frame) {
     if (frame['t'] == 'hello') {
-      scheduleMicrotask(() => s.push(<String, dynamic>{
-            't': 'hello_ok',
-            'clientId': 'c1',
-            'online': true,
-            'name': 'DESKTOP',
-          }));
+      scheduleMicrotask(
+        () => s.push(<String, dynamic>{
+          't': 'hello_ok',
+          'clientId': 'c1',
+          'online': true,
+          'name': 'DESKTOP',
+        }),
+      );
       return;
     }
     final data = frame['data'] as Map<String, dynamic>;
@@ -110,9 +115,26 @@ FakeSocket healthyAgent({
             'defaultCwd': r'C:\work',
             'roots': <String>[r'C:\work'],
             'allowBypass': false,
+            'capabilities': capabilities,
+            'codex': ?codex,
           });
         case 'list_sessions':
-          s.msg(<String, dynamic>{'kind': 'sessions', 'id': id, 'sessions': sessions});
+          s.msg(<String, dynamic>{
+            'kind': 'sessions',
+            'id': id,
+            'sessions': sessions,
+          });
+        case 'create_terminal':
+          s.msg(<String, dynamic>{
+            'kind': 'session_created',
+            'id': id,
+            'session': <String, dynamic>{
+              ...sessionJson('t1', kind: 'terminal'),
+              'cwd': data['cwd'],
+              'cols': data['cols'] ?? 80,
+              'rows': data['rows'] ?? 24,
+            },
+          });
         case 'subscribe':
           s.msg(<String, dynamic>{
             'kind': 'events',

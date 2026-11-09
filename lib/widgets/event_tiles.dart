@@ -17,6 +17,7 @@ bool isListed(SessionEvent e, SessionView view) {
       return false;
     case PermissionRequestEvent():
       return view.resolutionFor(e.requestId) != null;
+    case TerminalOutputEvent():
     case UnknownEvent():
       return false;
     default:
@@ -25,11 +26,7 @@ bool isListed(SessionEvent e, SessionView view) {
 }
 
 class EventTile extends StatelessWidget {
-  const EventTile({
-    super.key,
-    required this.event,
-    required this.view,
-  });
+  const EventTile({super.key, required this.event, required this.view});
 
   final SessionEvent event;
   final SessionView view;
@@ -42,19 +39,21 @@ class EventTile extends StatelessWidget {
       AssistantEvent() => AssistantText(text: e.text),
       ThinkingEvent() => _Thinking(text: e.text),
       ToolUseEvent() => _ToolCall(
-          event: e,
-          result: view.resultFor(e.toolUseId),
-          running: view.info.isBusy,
-        ),
+        event: e,
+        result: view.resultFor(e.toolUseId),
+        running: view.info.isBusy,
+      ),
       PermissionRequestEvent() => _Decision(
-          request: e,
-          decision: view.resolutionFor(e.requestId)?.decision,
-        ),
+        request: e,
+        decision: view.resolutionFor(e.requestId)?.decision,
+      ),
       ResultEvent() => _Result(event: e),
       SystemEvent() => _Notice(text: e.text),
       ErrorEvent() => _ErrorRow(text: e.text),
-      ToolResultEvent() || PermissionResolvedEvent() || UnknownEvent() =>
-        const SizedBox.shrink(),
+      TerminalOutputEvent() ||
+      ToolResultEvent() ||
+      PermissionResolvedEvent() ||
+      UnknownEvent() => const SizedBox.shrink(),
     };
   }
 }
@@ -86,10 +85,7 @@ class _UserBubble extends StatelessWidget {
           ),
           child: SelectableText(
             text,
-            style: TextStyle(
-              color: scheme.onPrimaryContainer,
-              height: 1.45,
-            ),
+            style: TextStyle(color: scheme.onPrimaryContainer, height: 1.45),
           ),
         ),
       ),
@@ -359,8 +355,11 @@ class _Decision extends StatelessWidget {
     final what = request.isQuestion ? '已回答问题' : label;
     return Row(
       children: <Widget>[
-        Icon(request.isQuestion ? Icons.question_answer_outlined : icon,
-            size: 15, color: color),
+        Icon(
+          request.isQuestion ? Icons.question_answer_outlined : icon,
+          size: 15,
+          color: color,
+        ),
         const SizedBox(width: 6),
         Expanded(
           child: Text(
@@ -470,8 +469,11 @@ class _ErrorRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Icon(Icons.error_outline_rounded,
-              size: 18, color: scheme.onErrorContainer),
+          Icon(
+            Icons.error_outline_rounded,
+            size: 18,
+            color: scheme.onErrorContainer,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: SelectableText(

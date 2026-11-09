@@ -4,6 +4,8 @@
 // ignored, unknown agent statuses become [HerdrAgentStatus.unknown], and missing
 // optionals are simply absent. A newer desktop agent must never crash the app.
 
+import 'package:xterm/utils.dart';
+
 import 'protocol.dart';
 
 /// Lifecycle as Herdr reports it. `idle` and `done` both mean "ready for input".
@@ -609,3 +611,391 @@ const List<(String, String)> herdrKeys = <(String, String)>[
 // Same helpers as protocol.dart; kept local so this file stays self-contained.
 String _str(Object? v) => v is String ? v : '';
 int _int(Object? v) => v is num ? v.toInt() : 0;
+
+/// One pane screen, prepared for replay into a terminal emulator.
+///
+/// A Herdr `pane read` payload is a **flattened grid snapshot**, not a PTY byte
+/// stream: the escape sequences that positioned it were consumed by Herdr, and
+/// what comes back is text plus the spaces and line breaks that make up the
+/// layout. Feeding that verbatim into a terminal goes wrong in two specific ways,
+/// and this type exists to fix exactly those:
+///
+/// 1. A snapshot line ends in LF. A terminal treats LF as "move down one row",
+///    not "down and to column 0", so every line would indent one step further
+///    than the last. [replayText] normalises line endings to CRLF.
+/// 2. The snapshot was painted for the desktop's column count. [columns] records
+///    that source geometry as metadata; the mobile emulator still replays at the
+///    phone's readable column count. Confirmed plain grid-padding is removed from
+///    the display copy so it cannot wrap into additional blank rows.
+///
+/// Deliberately does not trim: trailing spaces and blank lines are part of a
+/// terminal layout, and removing them is what broke alignment before.
+class HerdrPaneSnapshot {
+  const HerdrPaneSnapshot({
+    required this.text,
+    required this.columns,
+    required this.rows,
+    required this.replayText,
+  });
+
+  /// The snapshot exactly as received (escape sequences included, if `ansi`).
+  final String text;
+
+  /// Source column count, measured in terminal cells.
+  final int columns;
+
+  /// Row count, from the snapshot's line count.
+  final int rows;
+
+  /// [text] with line endings normalised so a terminal replays it as a full grid.
+  ///
+  /// Line endings become CRLF (a bare LF only moves the cursor down, which
+  /// step-indents every line), **except a single trailing terminator, which is
+  /// dropped**. A trailing CRLF would move the cursor past the last row and scroll
+  /// the grid up by one, pushing the snapshot's first line into scrollback:
+  /// `'a\nb\n'` in a 2-row grid showed only `b`, and `'x\n'` in a 1-row grid
+  /// showed nothing at all. The emulator's grid, not the byte stream, is what the
+  /// user sees, so replay must leave the cursor on the final row.
+  final String replayText;
+
+  /// Builds a snapshot from one push payload.
+  ///
+  /// [format] is the wire format; `ansi` payloads still carry colour, so the
+  /// escapes are kept for the emulator rather than stripped here. [fallbackColumns]
+  /// is used only when the text is empty and there is nothing to measure.
+  factory HerdrPaneSnapshot.fromText(
+    String text, {
+    String format = 'ansi',
+    int fallbackColumns = 80,
+  }) {
+    // Normalise endings first: line splitting and width measurement should see
+    // the same lines the emulator will.
+    final normalised = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    final lines = normalised.split('\n');
+    var widest = 0;
+    for (final line in lines) {
+      final width = displayWidth(line);
+      if (width > widest) widest = width;
+    }
+    // A trailing newline yields one empty trailing element; the grid should not
+    // grow a phantom row for it, but an all-empty screen still needs one row.
+    final hadTrailingNewline = normalised.endsWith('\n');
+    final rows = hadTrailingNewline ? lines.length - 1 : lines.length;
+    final columnCount = widest > 0 ? widest : fallbackColumns;
+
+    // Strip the host grid's right-edge fill before replaying, so a padded short line
+    // cannot wrap into a phantom blank line at phone width. See [stripGridPadding]:
+    // it is a no-op unless the rows agree on a grid edge.
+    final unpadded = stripGridPadding(normalised);
+
+    // Replay must not scroll. Two ways it otherwise would:
+    //   * a trailing CRLF moves the cursor past the last row; and
+    //   * content that exactly fills the last row leaves the emulator in
+    //     "wrap pending", where the next CRLF wraps and scrolls as well.
+    // Dropping the final terminator covers the first; reserving a column for the
+    // wrap case is handled by [columns]'s caller staying at the source width and
+    // by not emitting that terminator at all.
+    var body = hadTrailingNewline
+        ? unpadded.substring(0, unpadded.length - 1)
+        : unpadded;
+    // If the last line exactly fills the grid width, appending nothing is correct;
+    // the CRLF we removed is what would have wrapped it. Normalise the rest.
+    body = body.replaceAll('\n', '\r\n');
+    return HerdrPaneSnapshot(
+      text: text,
+      columns: columnCount,
+      rows: rows < 1 ? 1 : rows,
+      replayText: body,
+    );
+  }
+
+  /// True when this is the same screen as [other] (used to skip a repaint).
+  bool sameScreenAs(HerdrPaneSnapshot other) => text == other.text;
+}
+
+/// Number of terminal cells [input] occupies.
+///
+/// Delegates to the **same** width table the vendored xterm renderer and buffer
+/// use (`UnicodeV11.wcwidth`), rather than a local approximation: any divergence
+/// would make a derived column count disagree with what actually gets painted, and
+/// the row would then be wrapped or clipped. That table already covers CJK
+/// double-width, combining marks (width 0) and the wide emoji ranges.
+///
+/// ANSI escape sequences occupy no cells and are skipped.
+int displayWidth(String input) {
+  var width = 0;
+  var i = 0;
+  while (i < input.length) {
+    final code = input.codeUnitAt(i);
+    if (code == 0x1b) {
+      i = _skipEscape(input, i);
+      continue;
+    }
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < input.length) {
+      final low = input.codeUnitAt(i + 1);
+      final rune = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+      width += unicodeV11.wcwidth(rune);
+      i += 2;
+      continue;
+    }
+    width += unicodeV11.wcwidth(code);
+    i += 1;
+  }
+  return width;
+}
+
+/// Shared width table instance (matching `Buffer`/`RenderTerminal`).
+final UnicodeV11 unicodeV11 = UnicodeV11();
+
+/// Skips one escape sequence starting at [start] (an ESC) and returns the next index.
+int _skipEscape(String input, int start) {
+  var i = start + 1;
+  if (i >= input.length) return i;
+  final next = input.codeUnitAt(i);
+  if (next == 0x5b) {
+    i += 1;
+    while (i < input.length) {
+      final c = input.codeUnitAt(i);
+      i += 1;
+      if (c >= 0x40 && c <= 0x7e) break;
+    }
+    return i;
+  }
+  if (next == 0x5d ||
+      next == 0x50 ||
+      next == 0x58 ||
+      next == 0x5e ||
+      next == 0x5f) {
+    i += 1;
+    while (i < input.length) {
+      final c = input.codeUnitAt(i);
+      if (c == 0x07) return i + 1;
+      if (c == 0x1b &&
+          i + 1 < input.length &&
+          input.codeUnitAt(i + 1) == 0x5c) {
+        return i + 2;
+      }
+      i += 1;
+    }
+    return i;
+  }
+  return i + 1;
+}
+
+/// Removes a host terminal's right-edge grid fill from a snapshot.
+///
+/// Herdr paints on a fixed grid, so a short line comes back padded with spaces out
+/// to the grid edge. At the desktop's width those are invisible; reflowed at a
+/// phone's ~40 columns they wrap onto their own line, which is the reported
+/// "mysterious blank lines". A fully-filled blank row is the worst case: one empty
+/// row at desktop width, two after wrapping.
+///
+/// The scan is a **token walk**, not a byte or suffix check, because ANSI makes the
+/// raw tail ambiguous: `content + spaces + ESC[0m` ends in `m`, and spaces may
+/// themselves be styled. Each row is walked with [_skipEscape], recording every
+/// visible space's source span together with the SGR state in effect (background /
+/// reverse video). A row is trimmed by deleting only the trailing run of **plain**
+/// spaces — no background, no reverse — while every escape token is copied through
+/// verbatim, including a trailing reset, which is stepped over but preserved.
+///
+/// Guards, all of which must hold or the text is returned untouched:
+///
+/// * **Group signature.** A padded screen agrees on an edge: two or more rows reach
+///   the same width, that width is the widest thing on screen, and no row exceeds it.
+/// * **Only plain trailing runs are removed.** A styled run is deliberate fill.
+/// * **A content-filled row is left alone.** A row reaching the edge without a plain
+///   trailing run has no fill to remove; it does not veto the other rows.
+/// * Leading and interior spaces, real blank lines, and the original line endings
+///   (including a trailing newline) are preserved.
+String stripGridPadding(String text) {
+  if (text.isEmpty) return text;
+  final hadTrailingNewline = text.endsWith('\n');
+  final lines = text.split('\n');
+  // The element after a trailing newline is not a row.
+  final rowCount = hadTrailingNewline ? lines.length - 1 : lines.length;
+  if (rowCount < 2) return text;
+
+  final scans = <_RowPad>[
+    for (var i = 0; i < rowCount; i++) _scanRowPadding(lines[i]),
+  ];
+
+  // The grid edge is the **widest** row, not the most common one: a screen with many
+  // short lines and only a couple of padded rows would otherwise elect a low edge and
+  // then trip the overflow guard below into a no-op. The widest width must still be
+  // supported by at least two rows, so a single coincidentally long line cannot
+  // define the edge.
+  //
+  // Caveat, deliberately not solved here: without grid metadata there is no way to
+  // tell a deliberate run of trailing spaces at the edge from real fill. That is why
+  // only a width agreed on by two or more rows is treated as an edge, and why the
+  // removal is limited to plain runs. It is a good heuristic, not a perfect
+  // separation.
+  final edge = scans.fold<int>(
+    0,
+    (best, scan) => scan.width > best ? scan.width : best,
+  );
+  if (edge <= 0) return text;
+  final edgeCount = scans.where((scan) => scan.width == edge).length;
+  if (edgeCount < 2) return text;
+
+  final out = StringBuffer();
+  for (var i = 0; i < rowCount; i++) {
+    final scan = scans[i];
+    // Only rows that reach the edge *and* end in a plain run are trimmed. A row that
+    // fills the edge with content has nothing to remove and is copied as-is.
+    final cut = scan.width == edge ? scan.plainTrailingStart : null;
+    out.write(cut == null ? lines[i] : _cutRow(lines[i], cut));
+    if (i < rowCount - 1) out.write('\n');
+  }
+  if (hadTrailingNewline) out.write('\n');
+  return out.toString();
+}
+
+/// One row's padding analysis.
+class _RowPad {
+  const _RowPad({required this.width, required this.plainTrailingStart});
+
+  /// Display width in cells (escapes contribute nothing).
+  final int width;
+
+  /// Source index where the trailing run of **plain** spaces begins, or null when
+  /// the row does not end in such a run (styled fill, or content at the edge).
+  ///
+  /// A trailing SGR reset is stepped over while locating the run but stays in the
+  /// output, so `content + spaces + ESC[0m` still reports the run's start.
+  final int? plainTrailingStart;
+}
+
+/// Walks [row]'s tokens, tracking SGR state, and locates its plain padding run.
+_RowPad _scanRowPadding(String row) {
+  var i = 0;
+  var width = 0;
+  var background = false;
+  var reverse = false;
+  int? runStart;
+
+  while (i < row.length) {
+    final code = row.codeUnitAt(i);
+    if (code == 0x1b) {
+      final next = _skipEscape(row, i);
+      final state = _applySgr(row.substring(i, next), background, reverse);
+      background = state.$1;
+      reverse = state.$2;
+      i = next;
+      continue;
+    }
+    final isHighSurrogate =
+        code >= 0xd800 && code <= 0xdbff && i + 1 < row.length;
+    final cellWidth = isHighSurrogate
+        ? unicodeV11.wcwidth(
+            0x10000 +
+                ((code - 0xd800) << 10) +
+                (row.codeUnitAt(i + 1) - 0xdc00),
+          )
+        : unicodeV11.wcwidth(code);
+    if (code == 0x20 && !background && !reverse) {
+      // A plain space extends (or starts) the candidate run.
+      runStart ??= i;
+    } else {
+      // Anything visible or styled ends the candidate run.
+      runStart = null;
+    }
+    width += cellWidth;
+    i += isHighSurrogate ? 2 : 1;
+  }
+
+  return _RowPad(width: width, plainTrailingStart: runStart);
+}
+
+/// Removes the plain-space run starting at [cut], keeping escapes that follow it.
+///
+/// Escapes are re-appended in order so a trailing reset still reaches the emulator;
+/// the padding cells themselves are dropped rather than re-emitted.
+String _cutRow(String row, int cut) {
+  final builder = StringBuffer()..write(row.substring(0, cut));
+  var i = cut;
+  while (i < row.length) {
+    final code = row.codeUnitAt(i);
+    if (code == 0x1b) {
+      final next = _skipEscape(row, i);
+      builder.write(row.substring(i, next));
+      i = next;
+      continue;
+    }
+    // Remaining plain spaces belonged to the run; anything visible is content.
+    if (code == 0x20) {
+      i += 1;
+      continue;
+    }
+    builder.write(row.substring(i));
+    break;
+  }
+  return builder.toString();
+}
+
+/// Applies a single SGR sequence to the running style state.
+///
+/// Returns the new `(background, reverse)` flags. Non-SGR escapes and unrecognised
+/// sequences leave the state unchanged, so a colour change elsewhere on the row
+/// cannot mark padding as styled.
+///
+/// Parameters are walked **by index, not mapped one-to-one**, because `38`/`48`/`58`
+/// introduce extended colour forms whose payload is *not* a list of SGR opcodes:
+/// `48;2;0;255;0` is an RGB background, and treating its `0` as a reset would wrongly
+/// clear the background (and so drop styled fill); `38;5;7` has a colour index `7`
+/// that must not be read as reverse video. Each such sequence consumes its payload
+/// (`5;n` or `2;r;g;b`) whole — `48` sets the background, `38`/`58` do not touch the
+/// tracked flags — and scanning continues after it, so later independent `0`/`49`/`27`
+/// still apply normally.
+(bool, bool) _applySgr(String escape, bool background, bool reverse) {
+  // Shape: ESC [ <params> m
+  if (escape.length < 3 ||
+      escape.codeUnitAt(0) != 0x1b ||
+      escape.codeUnitAt(1) != 0x5b ||
+      !escape.endsWith('m')) {
+    return (background, reverse);
+  }
+  final params = escape.substring(2, escape.length - 1);
+  final values = params.split(';');
+  var bg = background;
+  var rev = reverse;
+  var i = 0;
+  while (i < values.length) {
+    final part = values[i];
+    final value = part.isEmpty ? 0 : int.tryParse(part);
+    if (value == null) {
+      i += 1;
+      continue;
+    }
+    if (value == 38 || value == 48 || value == 58) {
+      // Extended colour: consume its whole payload so the digits inside it are never
+      // read as opcodes. Only `48` is a background; `38` (foreground) and `58`
+      // (underline colour) leave the tracked flags as they were.
+      final form = i + 1 < values.length ? int.tryParse(values[i + 1]) : null;
+      if (form == 5) {
+        i += 3; // 38/48/58 ; 5 ; n
+      } else if (form == 2) {
+        i += 5; // 38/48/58 ; 2 ; r ; g ; b
+      } else {
+        i += 1; // Unrecognised form: step past the introducer only.
+      }
+      if (value == 48) bg = true;
+      continue;
+    }
+    if (value == 0) {
+      bg = false;
+      rev = false;
+    } else if (value == 7) {
+      rev = true;
+    } else if (value == 27) {
+      rev = false;
+    } else if (value == 49) {
+      bg = false;
+    } else if ((value >= 40 && value <= 47) || (value >= 100 && value <= 107)) {
+      // Standard and high-intensity background colours.
+      bg = true;
+    }
+    i += 1;
+  }
+  return (bg, rev);
+}

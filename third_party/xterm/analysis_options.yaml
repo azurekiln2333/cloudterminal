@@ -1,0 +1,4 @@
+# Upstream vendored source; compiled by the app tests.
+analyzer:
+  exclude:
+    - '**'

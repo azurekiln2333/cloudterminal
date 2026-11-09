@@ -1,17 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/protocol.dart';
 import '../state/appearance.dart';
+import '../state/codex_catalog.dart';
+import '../state/herdr_controller.dart';
 import '../state/remote_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/appearance_sheet.dart';
 import '../widgets/history_sheet.dart';
 import '../widgets/new_session_sheet.dart';
 import '../widgets/session_card.dart';
+import '../widgets/workspace_sidebar.dart';
+import 'codex_screen.dart';
+import 'herdr_screen.dart';
 import 'session_screen.dart';
 
 /// Connection status plus the list of sessions on the paired PC.
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.controller,
@@ -21,15 +28,215 @@ class HomeScreen extends StatelessWidget {
   final RemoteController controller;
   final Appearance appearance;
 
-  void _open(BuildContext context, SessionInfo session) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => SessionScreen(
-          controller: controller,
-          view: controller.view(session),
-        ),
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  final _scaffold = GlobalKey<ScaffoldState>();
+  final _navigator = GlobalKey<NavigatorState>();
+  late final CodexCatalog _catalog = CodexCatalog(widget.controller);
+  late final HerdrController _herdr = HerdrController(widget.controller);
+  String? _selectedThread;
+  String? _selectedSession;
+  bool _herdrOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // HomeScreen is the long-lived owner of the controller and its sidebar shows
+    // live workspace counts, so it keeps one watcher for the whole session. The
+    // screens render their own rows and add their own watcher on top.
+    _herdr.watch();
+    unawaited(_herdr.refresh());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The Herdr watchdog polls the desktop; stop it while the app is not in the
+    // foreground and re-read once on return, so a tab created on the PC while
+    // the phone was locked is already there when the user looks at the screen.
+    if (state == AppLifecycleState.resumed) {
+      _herdr.watch();
+      unawaited(_herdr.refresh());
+    } else {
+      _herdr.unwatchAll();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _herdr.unwatch();
+    _catalog.dispose();
+    _herdr.dispose();
+    super.dispose();
+  }
+
+  Widget? _navigationButton(BuildContext context) =>
+      MediaQuery.sizeOf(context).width < 1000
+      ? IconButton(
+          tooltip: '工作空间',
+          onPressed: () => _scaffold.currentState?.openDrawer(),
+          icon: const Icon(Icons.menu_rounded),
+        )
+      : null;
+
+  void _home() {
+    _scaffold.currentState?.closeDrawer();
+    _navigator.currentState?.popUntil((route) => route.isFirst);
+    setState(() {
+      _selectedThread = null;
+      _selectedSession = null;
+      _herdrOpen = false;
+    });
+  }
+
+  /// Herdr is a sibling destination that keeps the existing session/Codex flow
+  /// untouched; returning from it restores the previous home view.
+  ///
+  /// [workspaceId] pre-selects a workspace (the drawer's workspace rows), so the
+  /// tap lands on the thing the user pointed at instead of the general page.
+  void _openHerdr({String? workspaceId}) {
+    _scaffold.currentState?.closeDrawer();
+    _navigator.currentState?.popUntil((route) => route.isFirst);
+    setState(() {
+      _selectedThread = null;
+      _selectedSession = null;
+      _herdrOpen = true;
+    });
+    _navigator.currentState!
+        .push(
+          MaterialPageRoute<void>(
+            builder: (context) => HerdrScreen(
+              controller: widget.controller,
+              herdr: _herdr,
+              initialWorkspaceId: workspaceId,
+              navigationButton: _navigationButton(context),
+            ),
+          ),
+        )
+        .then((_) {
+          if (mounted && !_navigator.currentState!.canPop()) {
+            setState(() => _herdrOpen = false);
+          }
+        });
+  }
+
+  void _open({SessionInfo? session, CodexThread? thread}) {
+    _home();
+    setState(() {
+      _selectedThread = thread?.id;
+      _selectedSession = session?.id;
+    });
+    _navigator.currentState!
+        .push(
+          MaterialPageRoute<void>(
+            builder: (context) => thread != null
+                ? CodexScreen(
+                    controller: widget.controller,
+                    thread: thread,
+                    navigationButton: _navigationButton(context),
+                  )
+                : SessionScreen(
+                    controller: widget.controller,
+                    view: widget.controller.view(session!),
+                    herdr: _herdr,
+                    navigationButton: _navigationButton(context),
+                  ),
+          ),
+        )
+        .then((_) {
+          if (mounted && !_navigator.currentState!.canPop()) {
+            setState(() {
+              _selectedThread = null;
+              _selectedSession = null;
+            });
+          }
+        });
+  }
+
+  Future<void> _history() async {
+    _scaffold.currentState?.closeDrawer();
+    final resumed = await showHistorySheet(context, widget.controller);
+    if (resumed != null && mounted) _open(session: resumed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= 1000;
+    final sidebar = WorkspaceSidebar(
+      controller: widget.controller,
+      catalog: _catalog,
+      herdr: _herdr,
+      onHome: _home,
+      onHistory: _history,
+      onHerdr: _openHerdr,
+      onHerdrWorkspace: (workspace) =>
+          _openHerdr(workspaceId: workspace.workspaceId),
+      onThread: (thread) => _open(thread: thread),
+      onSession: (session) => _open(session: session),
+      onCloseDrawer: () => _scaffold.currentState?.closeDrawer(),
+      showClose: !wide,
+      selectedThreadId: _selectedThread,
+      selectedSessionId: _selectedSession,
+      herdrSelected: _herdrOpen,
+    );
+    return Scaffold(
+      key: _scaffold,
+      drawer: wide ? null : sidebar,
+      body: Row(
+        children: <Widget>[
+          if (wide) SizedBox(width: 320, child: sidebar),
+          if (wide) const VerticalDivider(width: 1),
+          Expanded(
+            child: NavigatorPopHandler<Object?>(
+              onPopWithResult: (_) => _navigator.currentState!.maybePop(),
+              child: Navigator(
+                key: _navigator,
+                onGenerateRoute: (_) => MaterialPageRoute<void>(
+                  builder: (context) => _ManagedHomeScreen(
+                    controller: widget.controller,
+                    appearance: widget.appearance,
+                    herdr: _herdr,
+                    navigationButton: _navigationButton(context),
+                    onOpen: (session) => _open(session: session),
+                    onHerdr: _openHerdr,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
+  }
+}
+
+class _ManagedHomeScreen extends StatelessWidget {
+  const _ManagedHomeScreen({
+    required this.controller,
+    required this.appearance,
+    required this.onOpen,
+    required this.onHerdr,
+    this.herdr,
+    this.navigationButton,
+  });
+
+  final RemoteController controller;
+  final Appearance appearance;
+  final ValueChanged<SessionInfo> onOpen;
+
+  /// Opens the Herdr destination; drives the app-bar action and the empty
+  /// state's shortcut, which is the only way into Herdr when no PTY session was
+  /// ever created.
+  final VoidCallback onHerdr;
+  final HerdrController? herdr;
+  final Widget? navigationButton;
+
+  void _open(BuildContext context, SessionInfo session) {
+    onOpen(session);
   }
 
   Future<void> _newSession(BuildContext context) async {
@@ -107,8 +314,9 @@ class HomeScreen extends StatelessWidget {
       }
     } on RemoteException catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -116,17 +324,27 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: controller,
+      listenable: Listenable.merge(<Listenable?>[controller, herdr]),
       builder: (context, _) {
         final scheme = Theme.of(context).colorScheme;
         final sessions = controller.sessions;
         final online = controller.isOnline;
+        // Reads only: the page itself explains an unavailable bridge, so the
+        // entry must not disappear just because control is not established.
+        final herdrBrowsable = herdr?.canBrowse ?? false;
 
         return Scaffold(
           appBar: AppBar(
+            leading: navigationButton,
             titleSpacing: 16,
             title: _Title(controller: controller),
             actions: <Widget>[
+              if (herdrBrowsable)
+                IconButton(
+                  tooltip: 'Herdr 工作区',
+                  onPressed: onHerdr,
+                  icon: const Icon(Icons.grid_view_rounded),
+                ),
               IconButton(
                 tooltip: '历史会话',
                 onPressed: online ? () => _history(context) : null,
@@ -190,11 +408,24 @@ class HomeScreen extends StatelessWidget {
                     }
                   },
                   child: sessions.isEmpty
-                      ? _Empty(online: online)
+                      ? _Empty(
+                          online: online,
+                          herdr: herdr,
+                          onHerdr: onHerdr,
+                        )
                       : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+                          // Bottom padding clears the FAB *and* the phone's
+                          // gesture bar, so the last session is not parked under
+                          // the system inset.
+                          padding: EdgeInsets.fromLTRB(
+                            16,
+                            12,
+                            16,
+                            96 + MediaQuery.viewPaddingOf(context).bottom,
+                          ),
                           itemCount: sessions.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 10),
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 10),
                           itemBuilder: (context, i) {
                             final s = sessions[i];
                             return SessionCard(
@@ -274,23 +505,23 @@ class _ConnectionBanner extends StatelessWidget {
 
     final content = switch (phase) {
       ConnectionPhase.agentOffline => (
-          Icons.desktop_access_disabled_rounded,
-          '电脑上的 agent 没有连接到服务器。确认电脑开着并运行了 npm run agent。',
-          '重试',
-          false,
-        ),
+        Icons.desktop_access_disabled_rounded,
+        '电脑上的 agent 没有连接到服务器。确认电脑开着并运行了 npm run agent。',
+        '重试',
+        false,
+      ),
       ConnectionPhase.authFailed => (
-          Icons.key_off_rounded,
-          controller.lastError ?? '配对已失效，请重新配对。',
-          '重新配对',
-          true,
-        ),
+        Icons.key_off_rounded,
+        controller.lastError ?? '配对已失效，请重新配对。',
+        '重新配对',
+        true,
+      ),
       ConnectionPhase.disconnected => (
-          Icons.cloud_off_rounded,
-          controller.lastError ?? '连不上服务器，正在自动重试…',
-          '立即重试',
-          false,
-        ),
+        Icons.cloud_off_rounded,
+        controller.lastError ?? '连不上服务器，正在自动重试…',
+        '立即重试',
+        false,
+      ),
       _ => null,
     };
 
@@ -344,17 +575,32 @@ class _ConnectionBanner extends StatelessWidget {
 }
 
 class _Empty extends StatelessWidget {
-  const _Empty({required this.online});
+  const _Empty({
+    required this.online,
+    this.herdr,
+    this.onHerdr,
+  });
 
   final bool online;
+  final HerdrController? herdr;
+  final VoidCallback? onHerdr;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final workspaces = herdr?.canBrowse == true
+        ? herdr!.workspaces.length
+        : 0;
+    final herdrReady = onHerdr != null && workspaces > 0;
     return ListView(
       // Scrollable so pull-to-refresh works on the empty state too.
-      padding: const EdgeInsets.fromLTRB(32, 96, 32, 32),
+      padding: EdgeInsets.fromLTRB(
+        32,
+        72,
+        32,
+        32 + MediaQuery.viewPaddingOf(context).bottom,
+      ),
       children: <Widget>[
         Icon(
           online ? Icons.forum_outlined : Icons.hourglass_empty_rounded,
@@ -375,6 +621,18 @@ class _Empty extends StatelessWidget {
           textAlign: TextAlign.center,
           style: TextStyle(color: scheme.onSurfaceVariant, height: 1.5),
         ),
+        if (herdrReady) ...<Widget>[
+          const SizedBox(height: 20),
+          // Herdr lives on the desktop and needs no PTY session, so a phone with
+          // an empty session list must still be able to walk straight into it.
+          // Making the user create a session first was the dead end: nothing in
+          // the empty state said Herdr was already running next door.
+          OutlinedButton.icon(
+            onPressed: onHerdr,
+            icon: const Icon(Icons.grid_view_rounded),
+            label: Text('打开 Herdr（$workspaces 个工作区）'),
+          ),
+        ],
         const SizedBox(height: 8),
         Text(
           '长按会话可以停止或结束它。',

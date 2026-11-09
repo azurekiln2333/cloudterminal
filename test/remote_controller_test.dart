@@ -20,6 +20,40 @@ Future<void> settle() async {
   }
 }
 
+/// Hold only info replies while the socket keeps answering raw input requests.
+List<Map<String, dynamic>> holdAgentInfo(FakeSocket socket) {
+  final pending = <Map<String, dynamic>>[];
+  final respond = socket.onSend!;
+  socket.onSend = (s, frame) {
+    final data = frame['data'];
+    if (frame['t'] == 'msg' &&
+        data is Map<String, dynamic> &&
+        data['type'] == 'info') {
+      pending.add(data);
+      return;
+    }
+    respond(s, frame);
+  };
+  return pending;
+}
+
+void replyAgentInfo(
+  FakeSocket socket,
+  Map<String, dynamic> request, {
+  List<String> capabilities = const <String>['herdr'],
+}) {
+  socket.msg(<String, dynamic>{
+    'kind': 'info',
+    'id': request['id'],
+    'host': 'DESKTOP',
+    'platform': 'win32',
+    'defaultCwd': r'C:\work',
+    'roots': <String>[r'C:\work'],
+    'allowBypass': false,
+    'capabilities': capabilities,
+  });
+}
+
 void main() {
   group('RemoteController', () {
     late List<FakeSocket> sockets;
@@ -211,6 +245,211 @@ void main() {
       await expectLater(pending, throwsA(isA<RemoteException>()));
       expect(controller.phase, ConnectionPhase.agentOffline);
       await expectLater(controller.send('s1', 'hi'), throwsA(isA<RemoteException>()));
+    });
+
+    group('Herdr paste capability negotiation', () {
+      const modernCapabilities = <String>['herdr', 'herdr_paste'];
+
+      Future<void> expectPasteRefused(FakeSocket socket) async {
+        final before = socket.requests
+            .where((request) => request['type'] == 'herdr_send_text')
+            .length;
+        await expectLater(
+          controller.herdrSendText('wJ:p2', 'clipboard\n', paste: true),
+          throwsA(
+            isA<RemoteException>().having(
+              (error) => error.message,
+              'message',
+              contains('终端粘贴'),
+            ),
+          ),
+        );
+        expect(
+          socket.requests
+              .where((request) => request['type'] == 'herdr_send_text')
+              .length,
+          before,
+          reason: 'an unnegotiated paste must not become a raw write',
+        );
+      }
+
+      test(
+        'sends explicit paste only after the current info advertises it',
+        () async {
+          final socket = healthyAgent(capabilities: modernCapabilities);
+          final pendingInfo = holdAgentInfo(socket);
+          queue.add(socket);
+          controller = build()..connect();
+          await settle();
+
+          expect(controller.isOnline, isTrue);
+          await expectPasteRefused(socket);
+          await controller.herdrSendText('wJ:p2', '\x03');
+          expect(socket.lastRequest('herdr_send_text')!['text'], '\x03');
+          expect(
+            socket.lastRequest('herdr_send_text'),
+            isNot(contains('paste')),
+          );
+
+          replyAgentInfo(
+            socket,
+            pendingInfo.single,
+            capabilities: modernCapabilities,
+          );
+          await settle();
+          await controller.herdrSendText('wJ:p2', '  中文\n', paste: true);
+          expect(
+            socket.lastRequest('herdr_send_text'),
+            containsPair('paste', true),
+          );
+          expect(socket.lastRequest('herdr_send_text')!['text'], '  中文\n');
+          await controller.herdrSendText('wJ:p2', '\r', paste: false);
+          expect(
+            socket.lastRequest('herdr_send_text'),
+            isNot(contains('paste')),
+          );
+        },
+      );
+
+      test(
+        'cached modern info cannot authorize paste after agent presence changes',
+        () async {
+          final socket = healthyAgent(capabilities: modernCapabilities);
+          queue.add(socket);
+          controller = build()..connect();
+          await settle();
+          await controller.herdrSendText('wJ:p2', 'before', paste: true);
+          final pendingInfo = holdAgentInfo(socket);
+
+          socket.push(<String, dynamic>{'t': 'presence', 'online': false});
+          await settle();
+          expect(controller.agent!.capabilities, contains('herdr_paste'));
+          await expectPasteRefused(socket);
+          socket.push(<String, dynamic>{'t': 'presence', 'online': true});
+          await settle();
+
+          expect(controller.isOnline, isTrue);
+          expect(controller.agent!.capabilities, contains('herdr_paste'));
+          await expectPasteRefused(socket);
+          await controller.herdrSendText('wJ:p2', '\r');
+          expect(socket.lastRequest('herdr_send_text')!['text'], '\r');
+          replyAgentInfo(socket, pendingInfo.single);
+          await settle();
+          expect(
+            controller.agent!.capabilities,
+            isNot(contains('herdr_paste')),
+          );
+          await expectPasteRefused(socket);
+        },
+      );
+
+      test(
+        'a replacement socket must negotiate paste even with modern info cached',
+        () async {
+          final first = healthyAgent(capabilities: modernCapabilities);
+          final legacy = healthyAgent();
+          final pendingInfo = holdAgentInfo(legacy);
+          queue.addAll(<FakeSocket>[first, legacy]);
+          controller = build()..connect();
+          await settle();
+          await controller.herdrSendText('wJ:p2', 'before', paste: true);
+
+          first.drop();
+          await settle();
+          controller.reconnectNow();
+          await settle();
+          expect(controller.isOnline, isTrue);
+          expect(controller.agent!.capabilities, contains('herdr_paste'));
+          await expectPasteRefused(legacy);
+          await controller.herdrSendText('wJ:p2', '\x7f');
+          expect(legacy.lastRequest('herdr_send_text')!['text'], '\x7f');
+
+          replyAgentInfo(legacy, pendingInfo.single);
+          await settle();
+          await expectPasteRefused(legacy);
+        },
+      );
+
+      test(
+        'a failed replacement info probe keeps paste disabled until fresh modern info',
+        () async {
+          final socket = healthyAgent(capabilities: modernCapabilities);
+          queue.add(socket);
+          controller = build()..connect();
+          await settle();
+          await controller.herdrSendText('wJ:p2', 'before', paste: true);
+          final pendingInfo = holdAgentInfo(socket);
+          socket.push(<String, dynamic>{'t': 'presence', 'online': false});
+          await settle();
+          socket.push(<String, dynamic>{'t': 'presence', 'online': true});
+          await settle();
+          socket.msg(<String, dynamic>{
+            'kind': 'error',
+            'id': pendingInfo.single['id'],
+            'message': 'info unavailable',
+          });
+          await settle();
+
+          expect(controller.lastError, 'info unavailable');
+          expect(controller.agent!.capabilities, contains('herdr_paste'));
+          await expectPasteRefused(socket);
+          await controller.herdrSendText('wJ:p2', '\t');
+          expect(socket.lastRequest('herdr_send_text')!['text'], '\t');
+
+          socket.push(<String, dynamic>{'t': 'presence', 'online': true});
+          await settle();
+          expect(pendingInfo, hasLength(2));
+          await expectPasteRefused(socket);
+          replyAgentInfo(
+            socket,
+            pendingInfo.last,
+            capabilities: modernCapabilities,
+          );
+          await settle();
+          await controller.herdrSendText('wJ:p2', 'after\n', paste: true);
+          expect(
+            socket.lastRequest('herdr_send_text'),
+            containsPair('paste', true),
+          );
+        },
+      );
+
+      test(
+        'late info from an older online epoch cannot restore paste capability',
+        () async {
+          final socket = healthyAgent(capabilities: modernCapabilities);
+          queue.add(socket);
+          controller = build()..connect();
+          await settle();
+          await controller.herdrSendText('wJ:p2', 'before', paste: true);
+          final pendingInfo = holdAgentInfo(socket);
+
+          // Two online notifications issue distinct info probes on the live link.
+          // The older probe can finish after the replacement Agent's legacy info.
+          socket.push(<String, dynamic>{'t': 'presence', 'online': true});
+          await settle();
+          socket.push(<String, dynamic>{'t': 'presence', 'online': true});
+          await settle();
+          expect(pendingInfo, hasLength(2));
+          replyAgentInfo(socket, pendingInfo.last);
+          await settle();
+          await expectPasteRefused(socket);
+
+          replyAgentInfo(
+            socket,
+            pendingInfo.first,
+            capabilities: modernCapabilities,
+          );
+          await settle();
+          expect(
+            controller.agent!.capabilities,
+            isNot(contains('herdr_paste')),
+          );
+          await expectPasteRefused(socket);
+          await controller.herdrSendText('wJ:p2', '\x1b[A');
+          expect(socket.lastRequest('herdr_send_text')!['text'], '\x1b[A');
+        },
+      );
     });
 
     test('surfaces agent errors as RemoteException', () async {

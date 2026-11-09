@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/herdr.dart';
@@ -5,7 +7,7 @@ import '../state/herdr_controller.dart';
 import '../state/remote_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/herdr_status.dart';
-import 'herdr_pane_screen.dart';
+import 'herdr_terminal_screen.dart';
 
 /// Lists the real Herdr workspaces, their tabs/panes and the agents inside.
 ///
@@ -16,11 +18,16 @@ class HerdrScreen extends StatefulWidget {
     super.key,
     required this.controller,
     required this.herdr,
+    this.initialWorkspaceId,
     this.navigationButton,
   });
 
   final RemoteController controller;
   final HerdrController herdr;
+
+  /// Workspace to open expanded and highlighted, so a tap in the drawer lands on
+  /// the workspace the user pointed at instead of a page they must search.
+  final String? initialWorkspaceId;
   final Widget? navigationButton;
 
   @override
@@ -31,8 +38,21 @@ class _HerdrScreenState extends State<HerdrScreen> {
   @override
   void initState() {
     super.initState();
+    // A workspace chosen in the drawer is both selected (which workspace the
+    // terminal rows describe) and expanded (so its panes are reachable at once).
+    // Selection is a local read-only choice; it deliberately does not move the
+    // desktop's focus, because the user asked to look, not to switch.
+    //
+    // Deferred to after the frame: `selectWorkspace` notifies synchronously, and
+    // this route is still being built — notifying a listener mid-build throws.
+    final initial = widget.initialWorkspaceId;
+    // No watchdog here: this is the management page, refreshed on open and on
+    // pull-to-refresh. The live rows live on the terminal screen and the live
+    // workspace counts in the sidebar, which is where the watchdog belongs.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.herdr.refresh();
+      if (!mounted) return;
+      if (initial != null) widget.herdr.selectWorkspace(initial);
+      widget.herdr.refresh();
     });
   }
 
@@ -60,6 +80,7 @@ class _HerdrScreenState extends State<HerdrScreen> {
     required String body,
     required Future<Object?> Function() onConfirm,
   }) async {
+    final scheme = Theme.of(context).colorScheme;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -71,7 +92,13 @@ class _HerdrScreenState extends State<HerdrScreen> {
             onPressed: () => Navigator.of(context).pop(false),
             child: const Text('取消'),
           ),
+          // Error colours on purpose: this button cannot be undone, and a plain
+          // filled button read like the safe primary action.
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: scheme.error,
+              foregroundColor: scheme.onError,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('确认关闭'),
           ),
@@ -123,6 +150,15 @@ class _HerdrScreenState extends State<HerdrScreen> {
   }
 
   Future<void> _workspaceMenu(HerdrWorkspace workspace) async {
+    // The focused pane (or the first one) is what "open terminal" would land on,
+    // so the item is only offered when the workspace actually has one.
+    final panes = widget.herdr.panes(workspace.workspaceId);
+    final targetPane = panes.isEmpty
+        ? null
+        : panes.firstWhere(
+            (pane) => pane.focused,
+            orElse: () => panes.first,
+          );
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (context) => SafeArea(
@@ -130,9 +166,22 @@ class _HerdrScreenState extends State<HerdrScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
+            if (targetPane != null)
+              ListTile(
+                leading: const Icon(Icons.terminal_rounded),
+                title: const Text('打开终端'),
+                subtitle: Text(
+                  targetPane.terminalTitle.isEmpty
+                      ? targetPane.paneId
+                      : targetPane.terminalTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () => Navigator.of(context).pop('open'),
+              ),
             ListTile(
               leading: const Icon(Icons.open_in_new_rounded),
-              title: const Text('切换到该工作区'),
+              title: const Text('在电脑上切换'),
               onTap: () => Navigator.of(context).pop('focus'),
             ),
             ListTile(
@@ -155,6 +204,8 @@ class _HerdrScreenState extends State<HerdrScreen> {
     );
     if (!mounted || action == null) return;
     switch (action) {
+      case 'open':
+        if (targetPane != null) _openPane(workspace, targetPane);
       case 'focus':
         await _report(
           () => widget.herdr.run(
@@ -182,17 +233,51 @@ class _HerdrScreenState extends State<HerdrScreen> {
     }
   }
 
-  void _openPane(HerdrWorkspace workspace, HerdrPane pane) {
-    Navigator.of(context).push(
+  /// Opens the pane terminal for [pane].
+  ///
+  /// Ordering matters: the phone's own selection is set first and the desktop
+  /// focus is requested second, so a slow or failed focus cannot stop the user
+  /// from reaching the terminal they tapped. A failed focus is reported and the
+  /// screen still opens — the pane output is a read.
+  Future<void> _openPane(HerdrWorkspace workspace, HerdrPane pane) async {
+    final herdr = widget.herdr;
+    herdr.selectWorkspace(workspace.workspaceId);
+    herdr.watchPane(pane.paneId, explicit: true);
+    try {
+      await herdr.focusPane(pane.paneId);
+    } on RemoteException catch (e) {
+      // Not fatal: the desktop may already be on this pane, and reading it does
+      // not need the write capability.
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text('电脑端切换失败：${e.message}')));
+      }
+    }
+    if (!mounted) return;
+    await _pushPane(pane.paneId);
+  }
+
+  /// Pushes the pane terminal. Split out so the navigation target is stated in
+  /// exactly one place.
+  ///
+  /// The pane screen gets **no** `navigationButton`: it is a pushed route, and
+  /// handing it the drawer opener replaced Flutter's automatic back arrow with a
+  /// control that opened the root drawer — the phone had no visible way out. The
+  /// Drawer stays reachable one back-press away, on the screens that own it.
+  Future<void> _pushPane(String paneId) async {
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => HerdrPaneScreen(
+        builder: (context) => HerdrTerminalScreen(
           controller: widget.controller,
           herdr: widget.herdr,
-          workspace: workspace,
-          pane: pane,
+          paneId: paneId,
         ),
       ),
     );
+    // Returning from a pane has to land on a current list: a pane or tab may have
+    // been closed while it was open, and a stale row would offer a dead pane.
+    if (mounted) unawaited(widget.herdr.refresh());
   }
 
   @override
@@ -203,9 +288,19 @@ class _HerdrScreenState extends State<HerdrScreen> {
       final scheme = Theme.of(context).colorScheme;
       final availability = herdr.availability;
       final canControl = herdr.canControl;
+      // Opening a pane is a read, so it follows the link rather than the write
+      // capability; otherwise an unprobed bridge left every row dead.
+      final canBrowse = herdr.canBrowse;
+      // This page is always a pushed route (drawer workspace, app-bar action), so
+      // it needs a way back. It used to receive the drawer button as `leading`,
+      // which replaced the back arrow with a control that opened the *root*
+      // drawer — the phone had no visible way out of the page.
+      final canPop = Navigator.of(context).canPop();
       return Scaffold(
         appBar: AppBar(
-          leading: widget.navigationButton,
+          leading: canPop
+              ? BackButton(onPressed: () => Navigator.of(context).pop())
+              : widget.navigationButton,
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -219,6 +314,8 @@ class _HerdrScreenState extends State<HerdrScreen> {
             ],
           ),
           actions: <Widget>[
+            if (canPop && widget.navigationButton != null)
+              widget.navigationButton!,
             if (herdr.attentionCount > 0)
               Padding(
                 padding: const EdgeInsets.only(right: 4),
@@ -234,7 +331,8 @@ class _HerdrScreenState extends State<HerdrScreen> {
               ),
             IconButton(
               tooltip: '刷新 Herdr 状态',
-              onPressed: canControl && !herdr.loading
+              // Refreshing is a read, so it must not require write capability.
+              onPressed: canBrowse && !herdr.loading
                   ? () => herdr.refresh(force: true)
                   : null,
               icon: const Icon(Icons.refresh_rounded),
@@ -261,7 +359,9 @@ class _HerdrScreenState extends State<HerdrScreen> {
                   message: herdr.error!,
                   onRetry: () => herdr.refresh(force: true),
                 ),
-              Expanded(child: _content(context, canControl, availability)),
+              Expanded(
+                child: _content(context, canControl, canBrowse, availability),
+              ),
             ],
           ),
         ),
@@ -272,6 +372,7 @@ class _HerdrScreenState extends State<HerdrScreen> {
   Widget _content(
     BuildContext context,
     bool canControl,
+    bool canBrowse,
     HerdrAvailability? availability,
   ) {
     final herdr = widget.herdr;
@@ -295,7 +396,12 @@ class _HerdrScreenState extends State<HerdrScreen> {
     final workspaces = herdr.workspaces;
     if (workspaces.isEmpty) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(32, 72, 32, 32),
+        padding: EdgeInsets.fromLTRB(
+          32,
+          72,
+          32,
+          32 + MediaQuery.viewPaddingOf(context).bottom,
+        ),
         children: <Widget>[
           Icon(
             Icons.grid_view_rounded,
@@ -320,12 +426,23 @@ class _HerdrScreenState extends State<HerdrScreen> {
       );
     }
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
+      // The trailing padding clears the FAB and the gesture bar; without the
+      // inset the last workspace sat under the system navigation area.
+      padding: EdgeInsets.fromLTRB(
+        12,
+        8,
+        12,
+        96 + MediaQuery.viewPaddingOf(context).bottom,
+      ),
       itemCount: workspaces.length,
       itemBuilder: (context, index) => _WorkspaceTile(
+        key: ValueKey<String>(workspaces[index].workspaceId),
         workspace: workspaces[index],
         herdr: herdr,
         canControl: canControl,
+        canBrowse: canBrowse,
+        initiallyExpanded:
+            workspaces[index].workspaceId == widget.initialWorkspaceId,
         onMenu: () => _workspaceMenu(workspaces[index]),
         onOpenPane: (pane) => _openPane(workspaces[index], pane),
         onReport: _report,
@@ -337,18 +454,24 @@ class _HerdrScreenState extends State<HerdrScreen> {
 
 class _WorkspaceTile extends StatefulWidget {
   const _WorkspaceTile({
+    super.key,
     required this.workspace,
     required this.herdr,
     required this.canControl,
+    required this.canBrowse,
     required this.onMenu,
     required this.onOpenPane,
     required this.onReport,
     required this.onConfirmClose,
+    this.initiallyExpanded = false,
   });
 
   final HerdrWorkspace workspace;
   final HerdrController herdr;
   final bool canControl;
+
+  /// Whether panes may be opened for reading; independent of [canControl].
+  final bool canBrowse;
   final VoidCallback onMenu;
   final ValueChanged<HerdrPane> onOpenPane;
   final Future<void> Function(Future<Object?> Function()) onReport;
@@ -359,12 +482,28 @@ class _WorkspaceTile extends StatefulWidget {
   })
   onConfirmClose;
 
+  /// Opens expanded (a workspace picked in the drawer) so its panes are visible
+  /// without a second tap.
+  final bool initiallyExpanded;
+
   @override
   State<_WorkspaceTile> createState() => _WorkspaceTileState();
 }
 
 class _WorkspaceTileState extends State<_WorkspaceTile> {
-  bool _expanded = false;
+  late bool _expanded = widget.initiallyExpanded;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_expanded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          widget.herdr.loadWorkspace(widget.workspace.workspaceId);
+        }
+      });
+    }
+  }
 
   Future<void> _toggle() async {
     if (_expanded) {
@@ -516,6 +655,32 @@ class _WorkspaceTileState extends State<_WorkspaceTile> {
         child: Center(child: CircularProgressIndicator()),
       );
     }
+    // "No panes" and "the read failed" are different facts. Reporting the first
+    // when the second is true sent the user looking for a workspace that was
+    // there all along.
+    final loadError = widget.herdr.error;
+    if (panes.isEmpty && tabs.isEmpty && loadError != null) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              loadError,
+              style: TextStyle(color: scheme.error, height: 1.4),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () =>
+                    widget.herdr.loadWorkspace(workspaceId, force: true),
+                child: const Text('重试'),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: Column(
@@ -554,7 +719,7 @@ class _WorkspaceTileState extends State<_WorkspaceTile> {
             for (final pane in panes)
               _PaneRow(
                 pane: pane,
-                canControl: widget.canControl,
+                canBrowse: widget.canBrowse,
                 onTap: () => widget.onOpenPane(pane),
               )
           else ...<Widget>[
@@ -572,7 +737,7 @@ class _WorkspaceTileState extends State<_WorkspaceTile> {
               for (final pane in panes.where((p) => p.tabId == tab.tabId))
                 _PaneRow(
                   pane: pane,
-                  canControl: widget.canControl,
+                  canBrowse: widget.canBrowse,
                   onTap: () => widget.onOpenPane(pane),
                 ),
             ],
@@ -582,7 +747,7 @@ class _WorkspaceTileState extends State<_WorkspaceTile> {
             ))
               _PaneRow(
                 pane: pane,
-                canControl: widget.canControl,
+                canBrowse: widget.canBrowse,
                 onTap: () => widget.onOpenPane(pane),
               ),
           ],
@@ -690,19 +855,22 @@ class _MetaChip extends StatelessWidget {
 class _PaneRow extends StatelessWidget {
   const _PaneRow({
     required this.pane,
-    required this.canControl,
+    required this.canBrowse,
     required this.onTap,
   });
 
   final HerdrPane pane;
-  final bool canControl;
+
+  /// Opening the pane only reads it, so an unprobed or unavailable bridge
+  /// must still let the user look; writes are gated inside the pane screen.
+  final bool canBrowse;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return InkWell(
-      onTap: canControl ? onTap : null,
+      onTap: canBrowse ? onTap : null,
       borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),

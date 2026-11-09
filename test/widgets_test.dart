@@ -181,5 +181,36 @@ void main() {
       await tester.pump();
       expect(socket.lastRequest('interrupt'), isNotNull);
     });
+
+    testWidgets('the soft keyboard return key sends the message', (tester) async {
+      await open(tester, <Map<String, dynamic>>[]);
+
+      final field = find.byType(TextField);
+      await tester.enterText(field, '回车也要能发出去');
+      await tester.pump();
+
+      // The return key must be a submit action, not a newline. A multi-line
+      // field would make the IME report newline here and nothing would send.
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        socket.lastRequest('send'),
+        containsPair('text', '回车也要能发出去'),
+      );
+    });
+
+    testWidgets('the return key does not send an empty message', (tester) async {
+      await open(tester, <Map<String, dynamic>>[]);
+
+      await tester.enterText(find.byType(TextField), '   ');
+      await tester.pump();
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.pump();
+      await tester.pump();
+
+      expect(socket.lastRequest('send'), isNull);
+    });
   });
 }

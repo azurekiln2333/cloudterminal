@@ -1,0 +1,4 @@
+[0m[1m[38;5;15m[48;5;1m  CT-DEVICE-1015  TEMP TEST PANE  wJ:pZ  [0m
+[0m[1m[38;5;0m[48;5;3m  >> TEMP-PANE-MARKER <<  [0m
+receiver ready 2026-10-15T13:59:27.898Z pid=60888
+CT1015-TEMP-START
