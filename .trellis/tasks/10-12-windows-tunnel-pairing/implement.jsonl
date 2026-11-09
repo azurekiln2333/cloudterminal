@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend quality gate and spec entry point"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Where the sidecar/bootstrap/pairing modules belong and the shell:false rule"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Actionable-error contract for sidecar and pairing failures"}
+{"file": ".trellis/spec/backend/herdr-protocol.md", "reason": "Herdr pane read/bridge contract reused by the Windows client"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter analyzer/test gate for both Flutter projects"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Flutter layering conventions the Windows project mirrors"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "ChangeNotifier + ListenableBuilder convention for the new controllers"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "TS producer / Dart mirror must change together; pairing URI and IPC are cross-layer"}
+{"file": ".trellis/tasks/10-12-windows-tunnel-pairing/research/tool-sessions-2026-10-12.md", "reason": "Measured Codex/Claude/Herdr session and stream capabilities and the no-stdout-grab boundary"}

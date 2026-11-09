@@ -1,0 +1,33 @@
+{
+  "id": "herdr-mobile-render",
+  "name": "herdr-mobile-render",
+  "title": "Fix Herdr pane rendering on mobile",
+  "description": "Replace the raw SelectableText dump in the Herdr pane screen with a real read-only terminal viewport that parses ANSI, reflows to phone width, and preserves the desktop screen layout. Mobile app only; ohos platform first.",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lichengyu",
+  "assignee": "lichengyu",
+  "createdAt": "2026-10-13",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/general-terminal",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-13-herdr-output-fidelity",
+    "10-13-herdr-pane-viewport",
+    "10-13-herdr-list-ux",
+    "10-13-herdr-pane-switcher",
+    "10-13-herdr-terminal-integration",
+    "10-15-herdr-live-push"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

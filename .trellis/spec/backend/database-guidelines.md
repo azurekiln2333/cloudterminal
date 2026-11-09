@@ -1,51 +1,41 @@
-# Database Guidelines
+# Persistence Guidelines
 
-> Database patterns and conventions for this project.
+There is no application database, ORM or migration system. `server/src/relay/relay.ts` stores registrations, clients, pairing and throttling in memory. `server/src/agent/core.ts` keeps live sessions/subscriptions in memory. Claude history is loaded through `HistoryLoader` and `server/src/agent/sdk.ts`, not a relay database.
 
----
+## Scope / Trigger
 
-## Overview
+Changes to identity persistence, reset or config location. Source: `server/src/agent/config.ts`.
 
-<!--
-Document your project's database conventions here.
+## Signatures
 
-Questions to answer:
-- What ORM/query library do you use?
-- How are migrations managed?
-- What are the naming conventions for tables/columns?
-- How do you handle transactions?
--->
+`loadConfig(file = configPath(), opts: { reset?: boolean } = {}): Promise<AgentConfig>` and `saveConfig(config: AgentConfig, file = configPath()): Promise<void>`.
 
-(To be filled by the team)
+## Contract
 
----
+`CLOUDTERMINAL_HOME` overrides `~/.cloudterminal`; filename is `agent.json`. Fields: `agentId`, `secret`, optional `relayUrl`, `relayKey`, `connectionMode: local | remote`, `roots`, `defaultCwd`, `terminal`, `localPort`. Missing identity or reset generates a new identity while retaining connection preferences. Save writes formatted JSON with a newline to a unique `0600` temporary file, renames it into place, cleans up the temporary file, then applies best-effort chmod. Existing configuration is replaced only after the complete write.
 
-## Query Patterns
+## Validation & Error Matrix
 
-<!-- How should queries be written? Batch operations? -->
+| Condition | Behavior |
+| --- | --- |
+| ENOENT | Generate and persist identity |
+| Complete existing config | Preserve identity |
+| reset true | Rotate identity |
+| Invalid JSON / other read failure | Throw contextual error |
+| Invalid field type, empty roots or port outside 1–65535 | Reject configuration |
 
-(To be filled by the team)
+Parsing validates known field types and startup preferences. Unknown fields are preserved for compatibility; directory existence and relay URL validation happen at their respective runtime boundaries.
 
----
+## Good / Base / Bad Cases
 
-## Migrations
+Good: reconnect reuses credentials. Base: missing file creates credentials. Bad: corrupt JSON must not silently replace identity.
 
-<!-- How to create and run migrations -->
+## Tests Required
 
-(To be filled by the team)
+When changing persistence, use temporary directories and assert identity reuse, reset, location override and malformed-file failure. Never test against a real user's config.
 
----
+## Wrong vs Correct
 
-## Naming Conventions
+Wrong: regenerate the secret on every reconnect. Correct: load persisted config and pass its identity to `RelayLink`.
 
-<!-- Table names, column names, index names -->
-
-(To be filled by the team)
-
----
-
-## Common Mistakes
-
-<!-- Database-related mistakes your team has made -->
-
-(To be filled by the team)
+Relay registrations and live sessions are not durable. The app marks missing sessions gone after restart; SDK history resume is a separate operation. App storage is documented in the frontend state guidelines.

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend entry point: quality gate and guide routing"}
+{"file": ".trellis/spec/frontend/herdr-ui.md", "reason": "Herdr UI contract: workspaces tabs panes agents listing ownership, no-fake-data rule, Material 3 + Chinese copy"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Widget conventions and styling for the list layout fixes and the new tab grouping"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Analyzer and test boundaries, including narrow-width widget tests for overflow assertions"}

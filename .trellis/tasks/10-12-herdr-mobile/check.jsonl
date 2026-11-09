@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend quality gate to re-run for the changed server package."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verification expectations for type-check and tests."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify every Herdr failure maps to an actionable typed error."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Analyzer and test boundaries for the Flutter changes."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Verify Dart parsing tolerates unknown/newer fields."}
+{"file":".trellis/tasks/10-12-herdr-mobile/research/herdr-cli-0.9.3.md","reason":"Check implemented commands and validators against real Herdr capabilities."}
+{"file":".trellis/tasks/10-12-herdr-mobile/prd.md","reason":"Acceptance criteria 1-7 to verify."}
+{"file":".trellis/tasks/10-12-herdr-mobile/design.md","reason":"Design contract to verify implementation against."}

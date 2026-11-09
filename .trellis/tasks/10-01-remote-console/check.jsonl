@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Node layout and injected interfaces"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Flutter state and UI conventions"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Wire compatibility and integration tests"}
+{"file": ".trellis/tasks/10-01-remote-console/desktop-integration.md", "reason": "User-authorized follow-up boundary and acceptance"}

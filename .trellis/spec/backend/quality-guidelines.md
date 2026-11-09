@@ -1,51 +1,22 @@
-# Quality Guidelines
+# Backend Quality Guidelines
 
-> Code quality standards for backend development.
+`server/package.json` requires Node >=23.6 and runs TypeScript directly. `server/tsconfig.json` enables strict, noUncheckedIndexedAccess, verbatimModuleSyntax and erasableSyntaxOnly. Use explicit `.ts` extensions and `import type`; avoid runtime enums/parameter properties. There is no configured lint or transpilation build script.
 
----
+SDK coupling stays in `server/src/agent/sdk.ts`. Structural QueryFn/QueryHandle interfaces in session.ts permit `server/test/fake-query.ts` without authenticated model calls.
 
-## Overview
+## Quality Gate
 
-<!--
-Document your project's quality standards here.
+From `server/`:
 
-Questions to answer:
-- What patterns are forbidden?
-- What linting rules do you enforce?
-- What are your testing requirements?
-- What code review standards apply?
--->
+```sh
+npm run check
+npm test
+```
 
-(To be filled by the team)
+Tests use node:test and node:assert/strict. Socket helpers are in `server/test/helpers.ts`. Inject fake dependencies for state transitions and use a local relay for routing/auth integration. Close sockets, processes and servers in teardown.
 
----
+`npm run e2e` uses real Claude and requires local runtime/credentials; it can consume API usage. `scripts/demo-agent.ts` is scripted behavior and cannot verify real model execution.
 
-## Forbidden Patterns
+## Review Boundaries
 
-<!-- Patterns that should never be used and why -->
-
-(To be filled by the team)
-
----
-
-## Required Patterns
-
-<!-- Patterns that must always be used -->
-
-(To be filled by the team)
-
----
-
-## Testing Requirements
-
-<!-- What level of testing is expected -->
-
-(To be filled by the team)
-
----
-
-## Code Review Checklist
-
-<!-- What reviewers should check -->
-
-(To be filled by the team)
+Update both protocol files and consumer tests for wire changes. Preserve request IDs, client targeting, event sequences and replay reset. Validate remote inputs at runtime; casts do not validate JSON. Keep resource limits and close paths explicit. Report skipped tests or missing native runtimes separately from passing unit tests.

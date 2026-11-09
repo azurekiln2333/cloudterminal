@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend entry point: quality gate and guide routing"}
+{"file": ".trellis/spec/frontend/herdr-ui.md", "reason": "Herdr listing contract the adaptive layout must preserve: label/counts/status/focus rendering and no-fake-data rule"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Analyzer and test boundaries for the new overflow and tab-visibility tests"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Styling conventions the list layout must keep consistent with the rest of the app"}

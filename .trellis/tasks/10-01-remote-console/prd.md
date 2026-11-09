@@ -1,54 +1,23 @@
-# Remote Claude Code console
-
-## Problem
-
-Claude Code runs on the developer's PC. When away from the desk with only a
-phone, remote desktop is too clumsy to follow progress, answer permission
-prompts, or type follow-up instructions.
+# Remote desktop terminal console
 
 ## Goal
+Continue the existing working Claude console as a general desktop terminal controlled from the phone. The user explicitly authorized continuation and broadened scope on 2026-10-01: arbitrary CLI tools, not only Claude/Codex.
 
-A phone app (Flutter, Material 3, UI language shared with `D:\MyNewProjects\terminax`)
-that connects to the PC over the internet and lets the user:
+## Requirements
+- Preserve pairing, authenticated relay, Claude structured sessions and reconnect.
+- Run a real desktop PTY shell supporting arbitrary interactive CLI tools.
+- Create terminal sessions from mobile, stream ANSI output, send exact input and control keys, resize and close.
+- Offer a desktop CLI mode that starts and locally controls a terminal also visible on the phone.
+- Disconnecting the phone must not stop the terminal; reconnect replays bounded output with explicit reset on gaps.
+- Advertise terminal capability; older agents remain usable.
 
-1. See the live progress stream of a Claude Code session (assistant text,
-   tool calls, tool results, errors, final result / cost).
-2. Type a prompt or follow-up message from the phone.
-3. Approve or deny permission requests (tool use) from the phone, including
-   answering AskUserQuestion-style questions.
-4. Start new sessions in a chosen working directory, interrupt a running
-   turn, switch permission mode.
-5. Reconnect after network loss without losing events (replay from sequence).
+## Acceptance
+- Node typecheck/tests, Flutter analyze/tests pass, including real PTY smoke and Dart-to-Node protocol coverage.
+- Terminal mode requires no Claude login and no AI API consumption.
+- Document startup, tool usage, pairing and security limits accurately.
 
-## Components
+## Boundaries
+Existing arbitrary OS terminals cannot be retroactively attached: start through CloudTerminal. Process persistence across agent restart, E2EE, background push, public deployment and store distribution are outside this continuation. Root selection constrains initial working directories, not shell execution privileges.
 
-- **Agent** (runs on the PC, Node.js): drives Claude Code through the official
-  Claude Agent SDK and exposes sessions over a WebSocket protocol.
-- **Relay** (runs on a public server, Node.js): forwards messages between the
-  agent (dials out, so no port forwarding on the PC) and phone clients.
-- **App** (Flutter): pairing, session list, live session view, composer,
-  permission cards.
-
-## Constraints
-
-- No inbound port on the PC is required (agent dials out to the relay).
-- Relay must not accept an arbitrary client for an agent: clients present a
-  pairing secret, compared in constant time. Agents registering with the relay
-  present a relay key when one is configured.
-- Transport must be TLS (`wss://`) in any internet deployment; plain `ws://`
-  only for LAN / localhost testing.
-- Git commit after every step.
-
-## Acceptance criteria
-
-- Relay and agent unit tests pass (`npm test` in `server/`), `tsc --noEmit` clean.
-- End-to-end smoke test: relay + agent + scripted client can create a session,
-  receive streamed events, receive a permission request, answer it, and see the
-  tool result.
-- `flutter analyze` clean and widget tests pass.
-
-## Out of scope (v1)
-
-- End-to-end encryption between phone and agent (relay sees plaintext over TLS).
-- Attaching to an already-running interactive `claude` terminal session.
-- Push notifications when the app is backgrounded.
+## Authorized follow-up
+See [desktop-integration.md](desktop-integration.md) for the 2026-10-03 requested easy deployment and Codex Desktop sidebar/control scope. Previous completion applies only to the terminal baseline; this follow-up remains in progress.

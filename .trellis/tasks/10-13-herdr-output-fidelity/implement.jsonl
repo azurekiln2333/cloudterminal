@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend entry point: layers, quality gate (flutter analyze + flutter test), and which guide to read for which change"}
+{"file": ".trellis/spec/frontend/herdr-ui.md", "reason": "Authoritative Herdr UI contract: models/controller/screens ownership, no-fake-data rule, no blind resend, lenient parsing"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "HerdrOutput is a wire-parsed model; this defines how model fields and lenient parsing must be written"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Analyzer/test boundaries for this task's new model tests and updated assertions"}

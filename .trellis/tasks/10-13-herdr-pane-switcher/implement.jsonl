@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/herdr-ui.md", "reason": "Herdr UI layering, no-fake-data rule, controller ownership"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "ChangeNotifier and widget-state conventions"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "analyze/test gate"}

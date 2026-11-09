@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar the check step verifies against."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify new auth/DB error paths use the documented codes and do not leak internals."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify no secret, token, authorization code or code_verifier reaches the logs."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify the new MySQL store is documented and the old agent.json contract is not broken."}
+{"file": ".trellis/spec/backend/deployment.md", "reason": "Verify .env.example, Compose and README changes match deployment conventions."}
+{"file": ".trellis/tasks/10-13-relay-multitenant/prd.md", "reason": "Acceptance criteria checklist to confirm item by item."}
+{"file": ".trellis/tasks/10-13-relay-multitenant/design.md", "reason": "Cross-check implementation against the designed contracts and the stated backward-compatibility rules."}

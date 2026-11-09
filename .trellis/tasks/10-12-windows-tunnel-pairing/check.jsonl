@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Run the backend quality gate"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Type-check and test expectations for sidecar and tool-stream modules"}
+{"file": ".trellis/spec/backend/herdr-protocol.md", "reason": "Verify the client's Herdr claims match the documented read/poll contract"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Flutter analyzer/test gate for both projects"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Widget/integration test boundaries"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Lenient parsing rules for tool models and pairing URI"}
+{"file": ".trellis/tasks/10-12-windows-tunnel-pairing/research/tool-sessions-2026-10-12.md", "reason": "Verify no false real-time claims against measured capabilities"}

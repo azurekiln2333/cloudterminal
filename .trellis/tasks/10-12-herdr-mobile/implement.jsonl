@@ -1,0 +1,11 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend quality gate and guide map for the new Herdr bridge module."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Module boundaries: herdr.ts placement, optional bridge wiring, injectable runner pattern."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Agent failure contract for normalising Herdr error codes into typed client errors."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Type-check and node:test expectations for the new server tests."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Injected logger usage and keeping ids/paths out of sensitive log fields."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Lenient typed wire parsing rules for the new Herdr Dart models."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Widget/async-action and styling conventions for the new Herdr screens."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Controller/refresh/dispose conventions for HerdrController."}
+{"file":".trellis/tasks/10-12-herdr-mobile/research/herdr-cli-0.9.3.md","reason":"Ground truth for the real Herdr 0.9.3 CLI, JSON shapes, error codes and semantics."}
+{"file":"server/src/shared/protocol.ts","reason":"Wire contract that must be extended additively for herdr_* messages."}
+{"file":"lib/models/protocol.dart","reason":"Dart mirror that must stay in sync with the TS wire contract."}

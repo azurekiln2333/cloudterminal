@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/herdr-protocol.md", "reason": "verify the push additions are documented and do not break the existing validation boundary"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "verify the server test gate actually ran"}
+{"file": ".trellis/spec/frontend/herdr-ui.md", "reason": "verify no-fake-data and that a push cannot desync the caches"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "verify analyze/test results"}

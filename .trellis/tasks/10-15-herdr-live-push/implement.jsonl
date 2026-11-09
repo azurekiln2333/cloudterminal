@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/herdr-protocol.md", "reason": "the wire contract this task extends: validation rules, argv-only CLI, error prefixes"}
+{"file": ".trellis/spec/backend/index.md", "reason": "backend layering: which module may spawn processes and how modules are wired"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "how a background socket failure must degrade without surfacing as a user-facing error"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "logging for a long-lived background connection and its reconnect loop"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "server test gate"}
+{"file": ".trellis/spec/frontend/herdr-ui.md", "reason": "no-fake-data rule, controller ownership, and the watchdog contract this task changes"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "ChangeNotifier conventions for applying a push into controller state"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "analyze/test gate"}

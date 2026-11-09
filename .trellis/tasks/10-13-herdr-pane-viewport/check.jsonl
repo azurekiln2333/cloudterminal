@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend entry point: quality gate and guide routing"}
+{"file": ".trellis/spec/frontend/herdr-ui.md", "reason": "Herdr UI contract: pane output as data, read sources explicit, no-fake-data rule the viewport must uphold"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Analyzer and test boundaries for the viewport widget tests"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Styling and widget conventions the viewport must follow"}

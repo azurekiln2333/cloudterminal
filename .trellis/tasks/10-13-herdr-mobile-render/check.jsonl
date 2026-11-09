@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend quality gate for the final full-scope check"}
+{"file": ".trellis/spec/frontend/herdr-ui.md", "reason": "Cross-child contract check: no-fake-data rule, output as data, Material 3, navigation preserved"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Full-scope check boundaries and how to report skipped/unverified items honestly"}
+{"file": ".trellis/spec/backend/herdr-protocol.md", "reason": "Verify the mobile-only change introduced no protocol or agent-side drift"}

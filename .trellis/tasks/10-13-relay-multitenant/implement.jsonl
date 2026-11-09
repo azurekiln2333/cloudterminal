@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index: entry point for all server-side conventions this task must follow."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Defines where new relay/db/oauth modules must live and how imports are structured."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Current persistence contract (agent.json only, no DB). This task changes it and must document the new MySQL store consistently."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error taxonomy and how failures are surfaced; new auth/DB failures need machine-readable codes."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Logger usage and what must never be logged (secrets, tokens, codes)."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Test and review expectations the new modules and suites must satisfy."}
+{"file": ".trellis/spec/backend/deployment.md", "reason": "Docker/Compose/deploy conventions for adding DB and OAuth environment settings."}
+{"file": ".trellis/tasks/10-13-relay-multitenant/prd.md", "reason": "Requirements and acceptance criteria for this task."}
+{"file": ".trellis/tasks/10-13-relay-multitenant/design.md", "reason": "Module layout, MySQL schema, OAuth flows, routing changes and rollback plan to implement against."}
+{"file": ".trellis/tasks/10-13-relay-multitenant/implement.md", "reason": "Ordered execution checklist this implementation must follow step by step."}

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend entry point: quality gate (flutter analyze + flutter test) and guide routing"}
+{"file": ".trellis/spec/frontend/herdr-ui.md", "reason": "Authoritative Herdr UI contract the pane viewport must satisfy: output as data, never truncated, no-fake-data rule, Material 3 + Chinese copy"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Widget conventions, async lifecycle and styling for the new HerdrPaneViewport widget"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "Flutter lifecycle rules (initState/didUpdateWidget/dispose) governing the Terminal instance lifecycle and outputKey write strategy"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Analyzer/test boundaries for the new widget tests"}
